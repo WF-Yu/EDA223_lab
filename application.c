@@ -13,31 +13,55 @@
 #include <stdlib.h>
 #include <stdio.h>
 
+#define init_freq_index() {0,2,4,0,0,2,4,0,4,5,7,4,5,7,7,9,7,5,4,0,7,9,7,5,4,0,0,-5,0,0,-5,0}
+#define init_period() {2024,1911,1803,1702,1607,1516,1431,1351,1275,1203,1136,1072,1012,955,901,851,803,758,715,675,637,601,568,536,506}
+
 typedef struct {
     Object super;
     int count;
     char c;
 	int buffsize;
 	int i; 		/* the index of buffer*/
-	char buff[20];  /*buf to store the integer chars*/
+	char buff[64];  /*buf to store the integer chars*/
 	int num[3];    /*integer input from uart*/
 	int wrcnt ; 	/*number of integer write into*/
 	int rdcnt;		/*number of integer can be read*/
 	int sum;
 	int median;
+	int freq_index[32];
+	int period[25];
+	int key;
+	int volume;
+	int mute;		
+	int sound_freq;
 } App;
 
-App app = { initObject(), 0, 'X', 20, 0, {0}, {0}, 0, 0, 0, 0};
+
+
+App app = { initObject(), 0, 'X', 20, 0, {0}, {0}, 0, 0, 0, 0, init_freq_index(), init_period(),0,5,0,1000};
 
 void reader(App*, int);
 void receiver(App*, int);
 void read_integer(App*, int);
 void find_median(App* , int );
 void print_info(App*, int);
+void calc_period(App*, int);
+void play_sound(App*, int);
 
 Serial sci0 = initSerial(SCI_PORT0, &app, reader);
-
 Can can0 = initCan(CAN_PORT0, &app, receiver);
+
+void play_sound(App* self, int ON){
+	int* p = (int*)0x4000741C;
+	if (ON == 1){
+		*(p) = self-> volume * self->mute;
+	}
+	if (ON == 0){
+		*(p) = 0;
+	}
+	
+	AFTER(USEC(500000 / self->sound_freq),self, play_sound, (ON + 1) % 2);
+}
 
 void receiver(App *self, int unused) {
     CANMsg msg;
@@ -51,6 +75,29 @@ void reader(App *self, int c) {
     SCI_WRITECHAR(&sci0, c);
     SCI_WRITE(&sci0, "\'\n");
 	ASYNC(self,read_integer,c);	
+}
+
+void calc_period(App* self, int unised) {
+	int x = self->key + 10;
+	int new_freq_index[32] = {0};
+	int new_period[32] = {0};
+	
+	for (int i = 0; i < 32; i++) {
+		new_freq_index[i] = self->freq_index[i] + x;		
+		new_period[i] = self->period[new_freq_index[i]];
+	}
+	
+	SCI_WRITE(&sci0, "\nfrequency:\n");
+	for (int i = 0; i < 32; i++) {
+		snprintf(self->buff, sizeof(self->buff), "%d ", new_freq_index[i] - 10);
+		SCI_WRITE(&sci0, self->buff);
+	}
+	
+	SCI_WRITE(&sci0, "\nperiod:\n");
+	for (int i = 0; i < 32; i++) {
+		snprintf(self->buff, sizeof(self->buff), "%d ", new_period[i]);
+		SCI_WRITE(&sci0, self->buff);
+	}
 }
 
 void find_median(App *self, int unused){
@@ -93,7 +140,7 @@ void find_median(App *self, int unused){
 		self->rdcnt++;
 	}
 	/*print the sum and median info*/
-	ASYNC(self, print_info, 0);
+	// ASYNC(self, print_info, 0);
 }
 
 void print_info(App* self, int unused){
@@ -125,12 +172,14 @@ void read_integer(App *self, int c) {
 		self->buff[self->i++] = c;
 		}
 		else {
-			SCI_WRITE(&sci0, "Warning: Buffer reaches the max legnth!\n");
+			 //SCI_WRITE(&sci0, "Warning: Buffer reaches the max legnth!\n");
 		}
 	}
 	else{
 		self->buff[self->i] = '\0';
 		self->num[self->wrcnt] = atoi(self->buff);
+		self->key = atoi(self->buff);
+		ASYNC(self, calc_period, 0);
 		self->i = 0;
 		self->sum = 0;
 		for (k=0; k<= self->rdcnt; k++){
@@ -148,7 +197,26 @@ void read_integer(App *self, int c) {
 		ASYNC(self, find_median, 0);
 		
 	}
-
+	if ( c == 'u') {
+		if (self->volume < 20) {
+			self->volume += 1;
+		}
+	} 
+	if ( c == 'd') {
+		if (self->volume > 0) {
+			self->volume -= 1;
+		}
+	}
+	if ( c == 'u' || c == 'd') {
+		snprintf(self->buff, sizeof(self->buff), "\nCurrent Volume is: %d\n", self->volume);
+		SCI_WRITE(&sci0, self->buff);
+	}
+	
+	if ( c == 'm') {
+		self->mute = self->mute==0?1:0;
+		snprintf(self->buff, sizeof(self->buff), "\nCurrent Volume is: %d\n", self->volume * self->mute);
+		SCI_WRITE(&sci0, self->buff);
+	}
 }
 
 void startApp(App *self, int arg) {
@@ -168,6 +236,8 @@ void startApp(App *self, int arg) {
     msg.buff[4] = 'o';
     msg.buff[5] = 0;
     CAN_SEND(&can0, &msg);
+	ASYNC(self, play_sound, 1);
+	
 }
 
 int main() {
