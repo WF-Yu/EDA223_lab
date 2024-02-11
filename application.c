@@ -17,6 +17,26 @@
 #define init_period() {2024,1911,1803,1702,1607,1516,1431,1351,1275,1203,1136,1072,1012,955,901,851,803,758,715,675,637,601,568,536,506}
 
 typedef struct {
+	Object super;
+	char buff[64];
+	int freq_index[32];
+	int period[25];
+	int key;
+	int volume;
+	int mute;		
+	int sound_freq;
+} ObjSound;
+
+
+void play_sound(ObjSound*, int);
+
+void set_key(ObjSound* self, int _key);
+
+void set_volume(ObjSound* self, int c);	
+	
+void calc_period(ObjSound* self, int unused);
+
+typedef struct {
     Object super;
     int count;
     char c;
@@ -28,40 +48,23 @@ typedef struct {
 	int rdcnt;		/*number of integer can be read*/
 	int sum;
 	int median;
-	int freq_index[32];
-	int period[25];
-	int key;
-	int volume;
-	int mute;		
-	int sound_freq;
+
 } App;
 
 
-
-App app = { initObject(), 0, 'X', 20, 0, {0}, {0}, 0, 0, 0, 0, init_freq_index(), init_period(),0,5,0,1000};
+App app = { initObject(), 0, 'X', 20, 0, {0}, {0}, 0, 0, 0, 0};
+ObjSound sound_0 = {initObject(), {0}, init_freq_index(), init_period(),0,5,0,1000};
 
 void reader(App*, int);
 void receiver(App*, int);
 void read_integer(App*, int);
 void find_median(App* , int );
 void print_info(App*, int);
-void calc_period(App*, int);
-void play_sound(App*, int);
 
 Serial sci0 = initSerial(SCI_PORT0, &app, reader);
 Can can0 = initCan(CAN_PORT0, &app, receiver);
 
-void play_sound(App* self, int ON){
-	int* p = (int*)0x4000741C;
-	if (ON == 1){
-		*(p) = self-> volume * self->mute;
-	}
-	if (ON == 0){
-		*(p) = 0;
-	}
-	
-	AFTER(USEC(500000 / self->sound_freq),self, play_sound, (ON + 1) % 2);
-}
+
 
 void receiver(App *self, int unused) {
     CANMsg msg;
@@ -77,28 +80,6 @@ void reader(App *self, int c) {
 	ASYNC(self,read_integer,c);	
 }
 
-void calc_period(App* self, int unised) {
-	int x = self->key + 10;
-	int new_freq_index[32] = {0};
-	int new_period[32] = {0};
-	
-	for (int i = 0; i < 32; i++) {
-		new_freq_index[i] = self->freq_index[i] + x;		
-		new_period[i] = self->period[new_freq_index[i]];
-	}
-	
-	SCI_WRITE(&sci0, "\nfrequency:\n");
-	for (int i = 0; i < 32; i++) {
-		snprintf(self->buff, sizeof(self->buff), "%d ", new_freq_index[i] - 10);
-		SCI_WRITE(&sci0, self->buff);
-	}
-	
-	SCI_WRITE(&sci0, "\nperiod:\n");
-	for (int i = 0; i < 32; i++) {
-		snprintf(self->buff, sizeof(self->buff), "%d ", new_period[i]);
-		SCI_WRITE(&sci0, self->buff);
-	}
-}
 
 void find_median(App *self, int unused){
 	/*deal with the situation with only 1 or 2 int*/
@@ -178,8 +159,12 @@ void read_integer(App *self, int c) {
 	else{
 		self->buff[self->i] = '\0';
 		self->num[self->wrcnt] = atoi(self->buff);
-		self->key = atoi(self->buff);
-		ASYNC(self, calc_period, 0);
+		
+		// self->key = atoi(self->buff);
+		ASYNC(&sound_0, set_key, atoi(self->buff));
+		
+		ASYNC(&sound_0, calc_period, 0);
+		
 		self->i = 0;
 		self->sum = 0;
 		for (k=0; k<= self->rdcnt; k++){
@@ -197,6 +182,61 @@ void read_integer(App *self, int c) {
 		ASYNC(self, find_median, 0);
 		
 	}
+	ASYNC(&sound_0, set_volume, c);
+	
+}
+
+void startApp(App *self, int arg) {
+    CANMsg msg;
+
+    CAN_INIT(&can0);
+    SCI_INIT(&sci0);
+    SCI_WRITE(&sci0, "Hello, hello...\n");
+
+    msg.msgId = 1;
+    msg.nodeId = 1;
+    msg.length = 6;
+    msg.buff[0] = 'H';
+    msg.buff[1] = 'e';
+    msg.buff[2] = 'l';
+    msg.buff[3] = 'l';
+    msg.buff[4] = 'o';
+    msg.buff[5] = 0;
+    CAN_SEND(&can0, &msg);
+	ASYNC(&sound_0, play_sound, 1);
+	
+}
+
+int main() {
+    INSTALL(&sci0, sci_interrupt, SCI_IRQ0);
+	INSTALL(&can0, can_interrupt, CAN_IRQ0);
+    TINYTIMBER(&app, startApp, 0);
+	//TINYTIMBER(&sound_0, play_sound, 1);
+    return 0;
+}
+
+
+//  sound generator part soudn.c
+//sound.c
+
+void play_sound(ObjSound* self, int ON){
+	int* p = (int*)0x4000741C;
+	if (ON == 1){
+		*(p) = self-> volume * self->mute;
+	}
+	if (ON == 0){
+		*(p) = 0;
+	}
+	
+	AFTER(USEC(500000 / self->sound_freq),self, play_sound, (ON + 1) % 2);
+}
+
+void set_key(ObjSound* self, int _key) {
+	self->key = _key;	
+}
+
+
+void set_volume(ObjSound* self, int c) {
 	if ( c == 'u') {
 		if (self->volume < 20) {
 			self->volume += 1;
@@ -218,31 +258,24 @@ void read_integer(App *self, int c) {
 		SCI_WRITE(&sci0, self->buff);
 	}
 }
-
-void startApp(App *self, int arg) {
-    CANMsg msg;
-
-    CAN_INIT(&can0);
-    SCI_INIT(&sci0);
-    SCI_WRITE(&sci0, "Hello, hello...\n");
-
-    msg.msgId = 1;
-    msg.nodeId = 1;
-    msg.length = 6;
-    msg.buff[0] = 'H';
-    msg.buff[1] = 'e';
-    msg.buff[2] = 'l';
-    msg.buff[3] = 'l';
-    msg.buff[4] = 'o';
-    msg.buff[5] = 0;
-    CAN_SEND(&can0, &msg);
-	ASYNC(self, play_sound, 1);
+void calc_period(ObjSound* self, int unused) {
+	int x = self->key + 10;
+	int new_freq_index[32] = {0};
+	int new_period[32] = {0};
+	for (int i = 0; i < 32; i++) {
+		new_freq_index[i] = self->freq_index[i] + x;	
+		new_period[i] = self->period[new_freq_index[i]];
+	}
 	
-}
-
-int main() {
-    INSTALL(&sci0, sci_interrupt, SCI_IRQ0);
-	INSTALL(&can0, can_interrupt, CAN_IRQ0);
-    TINYTIMBER(&app, startApp, 0);
-    return 0;
+	SCI_WRITE(&sci0, "\nfrequency:\n");
+	for (int i = 0; i < 32; i++) {
+		snprintf(self->buff, sizeof(self->buff), "%d ", new_freq_index[i] - 10);
+		SCI_WRITE(&sci0, self->buff);
+	}
+	
+	SCI_WRITE(&sci0, "\nperiod:\n");
+	for (int i = 0; i < 32; i++) {
+		snprintf(self->buff, sizeof(self->buff), "%d ", new_period[i]);
+		SCI_WRITE(&sci0, self->buff);
+	}
 }
