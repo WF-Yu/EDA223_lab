@@ -50,10 +50,21 @@ typedef struct {
 	int median;
 
 } App;
-
+typedef struct {
+	Object super;
+	int background_loop_range;
+	int interval;
+} Background_load;
 
 App app = { initObject(), 0, 'X', 20, 0, {0}, {0}, 0, 0, 0, 0};
 ObjSound sound_0 = {initObject(), {0}, init_freq_index(), init_period(),0,5,0,1000};
+Background_load background_load = {initObject(), 1000, 1300};
+
+Serial sci0 = initSerial(SCI_PORT0, &app, reader);
+Can can0 = initCan(CAN_PORT0, &app, receiver);
+
+void bg_loops(Background_load*, int);
+
 
 void reader(App*, int);
 void receiver(App*, int);
@@ -61,8 +72,6 @@ void read_integer(App*, int);
 void find_median(App* , int );
 void print_info(App*, int);
 
-Serial sci0 = initSerial(SCI_PORT0, &app, reader);
-Can can0 = initCan(CAN_PORT0, &app, receiver);
 
 
 
@@ -204,9 +213,9 @@ void startApp(App *self, int arg) {
     msg.buff[5] = 0;
     CAN_SEND(&can0, &msg);
 	ASYNC(&sound_0, play_sound, 1);
-	
+	ASYNC(&background_load, bg_loops, 0);
 }
-
+//main.c  ----------------------------------------------------------------------------
 int main() {
     INSTALL(&sci0, sci_interrupt, SCI_IRQ0);
 	INSTALL(&can0, can_interrupt, CAN_IRQ0);
@@ -217,7 +226,7 @@ int main() {
 
 
 //  sound generator part soudn.c
-//sound.c
+//sound.c ----------------------------------------------------------------------------
 
 void play_sound(ObjSound* self, int ON){
 	int* p = (int*)0x4000741C;
@@ -237,25 +246,30 @@ void set_key(ObjSound* self, int _key) {
 
 
 void set_volume(ObjSound* self, int c) {
-	if ( c == 'u') {
-		if (self->volume < 20) {
-			self->volume += 1;
-		}
-	} 
-	if ( c == 'd') {
-		if (self->volume > 0) {
-			self->volume -= 1;
-		}
-	}
-	if ( c == 'u' || c == 'd') {
-		snprintf(self->buff, sizeof(self->buff), "\nCurrent Volume is: %d\n", self->volume);
-		SCI_WRITE(&sci0, self->buff);
-	}
-	
-	if ( c == 'm') {
-		self->mute = self->mute==0?1:0;
-		snprintf(self->buff, sizeof(self->buff), "\nCurrent Volume is: %d\n", self->volume * self->mute);
-		SCI_WRITE(&sci0, self->buff);
+	switch (c) {
+		case 'u':
+			if (self->volume < 20) {
+				self->volume += 1;
+			}
+			snprintf(self->buff, sizeof(self->buff), "\nCurrent Volume is: %d\n", self->volume);
+			SCI_WRITE(&sci0, self->buff);
+		break;
+		
+		case 'd':
+			if (self->volume > 0) {
+				self->volume -= 1;
+			}
+			snprintf(self->buff, sizeof(self->buff), "\nCurrent Volume is: %d\n", self->volume);
+			SCI_WRITE(&sci0, self->buff);
+		break;
+		
+		case 'm':
+			self->mute = self->mute==0?1:0;
+			snprintf(self->buff, sizeof(self->buff), "\nCurrent Volume is: %d\n", self->volume * self->mute);
+			SCI_WRITE(&sci0, self->buff);
+		break;
+		
+		default:
 	}
 }
 void calc_period(ObjSound* self, int unused) {
@@ -278,4 +292,11 @@ void calc_period(ObjSound* self, int unused) {
 		snprintf(self->buff, sizeof(self->buff), "%d ", new_period[i]);
 		SCI_WRITE(&sci0, self->buff);
 	}
+}
+
+
+void bg_loops(Background_load* self, int unused) {
+	int cnt = self->background_loop_range;
+	while(cnt--);
+	AFTER(USEC(self->interval),self, bg_loops, 0);
 }
