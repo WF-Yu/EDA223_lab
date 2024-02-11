@@ -78,7 +78,7 @@ void set_ddl_bg(Background_load*, int);
 
 
 App app = { initObject(), 0, 'X', 20, 0, {0}, {0}, 0, 0, 0, 0};
-ObjSound sound_0 = {initObject(), {0}, init_freq_index(), init_period(),0,5,0,769, 0, 100};
+ObjSound sound_0 = {initObject(), {0}, init_freq_index(), init_period(),0,5,0,1000, 0, 100};
 Background_load background_load = {initObject(), {0}, 1000, 1300, 0, 1300};
 
 Serial sci0 = initSerial(SCI_PORT0, &app, reader);
@@ -252,7 +252,7 @@ void play_sound(ObjSound* self, int ON){
 	}
 	
 	if (self->ddl_en) {
-		SEND(USEC(500000 / self->sound_freq), self->ddl, self, play_sound, (ON + 1) % 2)
+		SEND(USEC(500000 / self->sound_freq), self->ddl, self, play_sound, (ON + 1) % 2);
 	}
 	else {
 		AFTER(USEC(500000 / self->sound_freq), self, play_sound, (ON + 1) % 2);
@@ -324,7 +324,7 @@ void bg_loops(Background_load* self, int unused) {
 	int cnt = self->background_loop_range;
 	while(cnt--);
 	if (self->ddl_en) {
-		SEND(USEC(self->interval), self->ddl, bg_loops, 0)
+		SEND(USEC(self->interval), self->ddl, self, bg_loops, 0);
 	}
 	else {
 		AFTER(USEC(self->interval),self, bg_loops, 0);
