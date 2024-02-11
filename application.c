@@ -6,6 +6,13 @@
  *    and then type each digit, after all digits are typed, type 'e' as the delimiter
  * 4. to clear the history of numbers typer 'f' or 'F'
  * 5. If you accidentally typed characteres other than numbers, you should use 'f' to clear the buffer and reset
+ * 
+ * To sumarize: 
+ * 	f, F: clear sumary 
+ * 	u, d: up, down volume
+ * 	h, l: higher, lower background load
+ *  s: sound ddl enable
+ *  b: background ddl enable
  * */
 #include "TinyTimber.h"
 #include "sciTinyTimber.h"
@@ -25,6 +32,8 @@ typedef struct {
 	int volume;
 	int mute;		
 	int sound_freq;
+	int ddl_en; // deadline_enable
+	int ddl;
 } ObjSound;
 
 typedef struct {
@@ -44,8 +53,11 @@ typedef struct {
 
 typedef struct {
 	Object super;
+	char buff[64]; 
 	int background_loop_range;
 	int interval;
+	int ddl_en; // deadline_enable
+	int ddl;
 } Background_load;
 
 void reader(App*, int);
@@ -58,19 +70,21 @@ void play_sound(ObjSound*, int);
 void set_key(ObjSound* self, int _key);
 void set_volume(ObjSound* self, int c);		
 void calc_period(ObjSound* self, int unused);
+void set_ddl_sound(ObjSound*, int);
 
 void bg_loops(Background_load*, int);
-void 
+void set_bg_load(Background_load* self, int c);
+void set_ddl_bg(Background_load*, int);
 
 
 App app = { initObject(), 0, 'X', 20, 0, {0}, {0}, 0, 0, 0, 0};
-ObjSound sound_0 = {initObject(), {0}, init_freq_index(), init_period(),0,5,0,1000};
-Background_load background_load = {initObject(), 1000, 1300};
+ObjSound sound_0 = {initObject(), {0}, init_freq_index(), init_period(),0,5,0,769, 0, 100};
+Background_load background_load = {initObject(), {0}, 1000, 1300, 0, 1300};
 
 Serial sci0 = initSerial(SCI_PORT0, &app, reader);
 Can can0 = initCan(CAN_PORT0, &app, receiver);
 
-
+// app.c-----------------------------------------------------------------------------------------------------------
 void receiver(App *self, int unused) {
     CANMsg msg;
     CAN_RECEIVE(&can0, &msg);
@@ -187,8 +201,12 @@ void read_integer(App *self, int c) {
 		ASYNC(self, find_median, 0);
 		
 	}
-	ASYNC(&sound_0, set_volume, c);
+	
+	ASYNC(&background_load, set_ddl_bg, c);
 	ASYNC(&background_load, set_bg_load, c);
+	
+	ASYNC(&sound_0, set_ddl_sound, c);	
+	ASYNC(&sound_0, set_volume, c);
 }
 
 void startApp(App *self, int arg) {
@@ -233,7 +251,12 @@ void play_sound(ObjSound* self, int ON){
 		*(p) = 0;
 	}
 	
-	AFTER(USEC(500000 / self->sound_freq),self, play_sound, (ON + 1) % 2);
+	if (self->ddl_en) {
+		SEND(USEC(500000 / self->sound_freq), self->ddl, self, play_sound, (ON + 1) % 2)
+	}
+	else {
+		AFTER(USEC(500000 / self->sound_freq), self, play_sound, (ON + 1) % 2);
+	}
 }
 
 void set_key(ObjSound* self, int _key) {
@@ -265,7 +288,7 @@ void set_volume(ObjSound* self, int c) {
 			SCI_WRITE(&sci0, self->buff);
 		break;
 		
-		default:
+		default:;
 	}
 }
 void calc_period(ObjSound* self, int unused) {
@@ -289,12 +312,23 @@ void calc_period(ObjSound* self, int unused) {
 		SCI_WRITE(&sci0, self->buff);
 	}
 }
-
+void set_ddl_sound(ObjSound* self, int c) {
+	if (c == 's') {
+		self->ddl_en = self->ddl_en == 0 ? 1 : 0;
+		snprintf(self->buff, sizeof(self->buff), "\nSound generator deadline enable: %d\n", self->ddl_en);
+		SCI_WRITE(&sci0, self->buff);
+	}
+}
 // -----------------------------------------------------------------
 void bg_loops(Background_load* self, int unused) {
 	int cnt = self->background_loop_range;
 	while(cnt--);
-	AFTER(USEC(self->interval),self, bg_loops, 0);
+	if (self->ddl_en) {
+		SEND(USEC(self->interval), self->ddl, bg_loops, 0)
+	}
+	else {
+		AFTER(USEC(self->interval),self, bg_loops, 0);
+	}
 }
 void set_bg_load(Background_load* self, int c) {
 	switch (c) {
@@ -313,5 +347,12 @@ void set_bg_load(Background_load* self, int c) {
 			snprintf(self->buff, sizeof(self->buff), "\nBackground load is: %d\n", self->background_loop_range);
 			SCI_WRITE(&sci0, self->buff);
 		break;
+	}
+}
+void set_ddl_bg(Background_load* self, int c) {
+	if (c == 'b') {
+		self->ddl_en = self->ddl_en == 0 ? 1 : 0;
+		snprintf(self->buff, sizeof(self->buff), "\nBackground load deadline enable: %d\n", self->ddl_en);
+		SCI_WRITE(&sci0, self->buff);
 	}
 }
