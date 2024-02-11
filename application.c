@@ -27,15 +27,6 @@ typedef struct {
 	int sound_freq;
 } ObjSound;
 
-
-void play_sound(ObjSound*, int);
-
-void set_key(ObjSound* self, int _key);
-
-void set_volume(ObjSound* self, int c);	
-	
-void calc_period(ObjSound* self, int unused);
-
 typedef struct {
     Object super;
     int count;
@@ -50,21 +41,12 @@ typedef struct {
 	int median;
 
 } App;
+
 typedef struct {
 	Object super;
 	int background_loop_range;
 	int interval;
 } Background_load;
-
-App app = { initObject(), 0, 'X', 20, 0, {0}, {0}, 0, 0, 0, 0};
-ObjSound sound_0 = {initObject(), {0}, init_freq_index(), init_period(),0,5,0,1000};
-Background_load background_load = {initObject(), 1000, 1300};
-
-Serial sci0 = initSerial(SCI_PORT0, &app, reader);
-Can can0 = initCan(CAN_PORT0, &app, receiver);
-
-void bg_loops(Background_load*, int);
-
 
 void reader(App*, int);
 void receiver(App*, int);
@@ -72,7 +54,21 @@ void read_integer(App*, int);
 void find_median(App* , int );
 void print_info(App*, int);
 
+void play_sound(ObjSound*, int);
+void set_key(ObjSound* self, int _key);
+void set_volume(ObjSound* self, int c);		
+void calc_period(ObjSound* self, int unused);
 
+void bg_loops(Background_load*, int);
+void 
+
+
+App app = { initObject(), 0, 'X', 20, 0, {0}, {0}, 0, 0, 0, 0};
+ObjSound sound_0 = {initObject(), {0}, init_freq_index(), init_period(),0,5,0,1000};
+Background_load background_load = {initObject(), 1000, 1300};
+
+Serial sci0 = initSerial(SCI_PORT0, &app, reader);
+Can can0 = initCan(CAN_PORT0, &app, receiver);
 
 
 void receiver(App *self, int unused) {
@@ -192,7 +188,7 @@ void read_integer(App *self, int c) {
 		
 	}
 	ASYNC(&sound_0, set_volume, c);
-	
+	ASYNC(&background_load, set_bg_load, c);
 }
 
 void startApp(App *self, int arg) {
@@ -215,7 +211,7 @@ void startApp(App *self, int arg) {
 	ASYNC(&sound_0, play_sound, 1);
 	ASYNC(&background_load, bg_loops, 0);
 }
-//main.c  ----------------------------------------------------------------------------
+//main.c  ------------------------------------------------------------------------------------------------------
 int main() {
     INSTALL(&sci0, sci_interrupt, SCI_IRQ0);
 	INSTALL(&can0, can_interrupt, CAN_IRQ0);
@@ -226,7 +222,7 @@ int main() {
 
 
 //  sound generator part soudn.c
-//sound.c ----------------------------------------------------------------------------
+//sound.c -------------------------------------------------------------------------------------------------------
 
 void play_sound(ObjSound* self, int ON){
 	int* p = (int*)0x4000741C;
@@ -294,9 +290,28 @@ void calc_period(ObjSound* self, int unused) {
 	}
 }
 
-
+// -----------------------------------------------------------------
 void bg_loops(Background_load* self, int unused) {
 	int cnt = self->background_loop_range;
 	while(cnt--);
 	AFTER(USEC(self->interval),self, bg_loops, 0);
+}
+void set_bg_load(Background_load* self, int c) {
+	switch (c) {
+		case 'h':
+			if (self->background_loop_range < 8000) {
+				self->background_loop_range += 500;
+			}
+			snprintf(self->buff, sizeof(self->buff), "\nBackground load is: %d\n", self->background_loop_range);
+			SCI_WRITE(&sci0, self->buff);
+		break;
+		
+		case 'l':
+			if (self->background_loop_range > 0) {
+				self->background_loop_range -= 500;
+			}
+			snprintf(self->buff, sizeof(self->buff), "\nBackground load is: %d\n", self->background_loop_range);
+			SCI_WRITE(&sci0, self->buff);
+		break;
+	}
 }
