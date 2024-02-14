@@ -8,10 +8,13 @@
  * 5. If you accidentally typed characteres other than numbers, you should use 'f' to clear the buffer and reset
  * 
  * To sumarize: 
+ * 	e	: delimeter of integer input
  * 	f, F: clear sumary 
+ *  m	: mute toggle button
  * 	u, d: up, down volume
  * 	h, l: higher, lower background load
- *  s: ddl enable
+ *  s: sound and background ddl enable toggle button
+
  * */
 #include "TinyTimber.h"
 #include "sciTinyTimber.h"
@@ -57,12 +60,7 @@ typedef struct {
 	int interval;
 	int ddl_en; // deadline_enable
 	int ddl;
-	Time totalTime;
-	Time maxTime;
-	int cnt;
 } Background_load;
-
-
 
 void reader(App*, int);
 void receiver(App*, int);
@@ -83,7 +81,7 @@ void set_ddl_bg(Background_load*, int);
 
 App app = { initObject(), 0, 'X', 20, 0, {0}, {0}, 0, 0, 0, 0};
 ObjSound sound_0 = {initObject(), {0}, init_freq_index(), init_period(),0,5,0,1000, 0, 100};
-Background_load background_load = {initObject(), {0}, 21500, 1300, 0, 1300, 0, 0, 0};
+Background_load background_load = {initObject(), {0}, 1000, 1300, 0, 1300};
 
 Serial sci0 = initSerial(SCI_PORT0, &app, reader);
 Can can0 = initCan(CAN_PORT0, &app, receiver);
@@ -325,47 +323,21 @@ void set_ddl_sound(ObjSound* self, int c) {
 }
 // -----------------------------------------------------------------
 void bg_loops(Background_load* self, int unused) {
-	Time end;
-	Time start = CURRENT_OFFSET();
 	int cnt = self->background_loop_range;
-	while(cnt--); // 
-	
+	while(cnt--);
 	if (self->ddl_en) {
-		end = CURRENT_OFFSET();
-		if (self->cnt++ < 500) {
-			self->totalTime += end - start;
-			self->maxTime = self->maxTime > (end - start) ? self->maxTime : (end - start);
-		}
-		if (self->cnt == 500) {
-			snprintf(self->buff, sizeof(self->buff), "\nTotal Time: %ld\n", self->totalTime);
-			SCI_WRITE(&sci0, self->buff);
-			snprintf(self->buff, sizeof(self->buff), "\nMax Time: %ld\n", self->maxTime);
-			SCI_WRITE(&sci0, self->buff);
-		}
-		
 		SEND(USEC(self->interval), self->ddl, self, bg_loops, 0);
 	}
-	else {		
-		end = CURRENT_OFFSET();
-		if (self->cnt++ < 500) {
-			self->totalTime += end - start;
-			self->maxTime = self->maxTime > (end - start) ? self->maxTime : (end - start);
-		}
-		if (self->cnt == 500) {
-			snprintf(self->buff, sizeof(self->buff), "\nTotal Time: %ld\n", self->totalTime);
-			SCI_WRITE(&sci0, self->buff);
-			snprintf(self->buff, sizeof(self->buff), "\nMax Time: %ld\n", self->maxTime);
-			SCI_WRITE(&sci0, self->buff);
-		}
+	else {
 		AFTER(USEC(self->interval),self, bg_loops, 0);
 	}
 }
 void set_bg_load(Background_load* self, int c) {
 	switch (c) {
 		case 'h':
-			if (self->background_loop_range < 8000) {
+//			if (self->background_loop_range < 8000) {
 				self->background_loop_range += 500;
-			}
+//			}
 			snprintf(self->buff, sizeof(self->buff), "\nBackground load is: %d\n", self->background_loop_range);
 			SCI_WRITE(&sci0, self->buff);
 		break;
