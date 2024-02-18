@@ -55,6 +55,7 @@ typedef struct {
 	
 typedef struct {
     Object super;
+	char buff[64]; 
 	int freq_index[32]; // tone of the music
 	int period[25]; // period look up table
 	int note_len[32]; // length of each note in freq_index[]
@@ -91,7 +92,7 @@ void make_silence(ObjSound* self, int unused);
 
 void go_play(Controller* self, int c);
 void set_key(Controller* self, int _key);
-void keyboard_input((Controller* self, int c);
+void keyboard_input(Controller* self, int c);
 void calc_period(Controller* self, int unused);
 
 
@@ -102,7 +103,7 @@ void set_ddl_bg(Background_load*, int);
 
 App app = { initObject(), 0, 'X', 20, 0, {0}, {0}, 0, 0, 0, 0};
 ObjSound sound_0 = {initObject(), {0}, 5, 1, 1000, 0, 100};
-Controller ctrl_obj = {initObject(), init_freq_index(), init_period(), init_note_length(), 0, 120, 0, 32};
+Controller ctrl_obj = {initObject(), {0}, init_freq_index(), init_period(), init_note_length(), 0, 120, 0, 32};
 Background_load background_load = {initObject(), {0}, 1000, 1300, 0, 1300};
 
 Serial sci0 = initSerial(SCI_PORT0, &app, reader);
@@ -248,7 +249,7 @@ void set_volume(ObjSound* self, int c) {
 	}
 }
 void make_silence(ObjSound* self, int unused) {
-	self->frequency = 0;
+	self->sound_freq = 0;
 }
 void set_ddl_sound(ObjSound* self, int c) {
 	if (c == 's') {
@@ -256,6 +257,10 @@ void set_ddl_sound(ObjSound* self, int c) {
 		snprintf(self->buff, sizeof(self->buff), "\nSound generator deadline enable: %d\n", self->ddl_en);
 		SCI_WRITE(&sci0, self->buff);
 	}
+}
+
+void set_freq(ObjSound* self, int _freq){
+	self->sound_freq = _freq;
 }
 
 // --Controller.c --------------------------------------------------------------------------------------------------------------------------------
