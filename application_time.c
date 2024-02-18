@@ -36,8 +36,8 @@ typedef struct {
 	Time totalTime;
 	Time maxTime;
 	int cnt;
-	Time end;
-	Time start;
+	Time endtime;
+	Time starttime;
 } ObjSound;
 
 typedef struct {
@@ -52,7 +52,6 @@ typedef struct {
 	int rdcnt;		/*number of integer can be read*/
 	int sum;
 	int median;
-
 } App;
 
 typedef struct {
@@ -254,22 +253,30 @@ int main() {
 void play_sound(ObjSound* self, int ON){
 			
 	int* p = (int*)0x4000741C;
-	int count = 100;
-	self->starttime = CURRENT_OFFSET();
-	while (count--) {
-		if (ON == 1){
-			*(p) = self-> volume * self->mute;
-			ON = 0;
-		}
-		if (ON == 0){
-			*(p) = 0;
-			ON = 1;
-		}
-	}
 	
-	self->endtime = CURRENT_OFFSET();
-	self->totalTime = self->endtime - self->starttime; 
+	int count_2 = 100;
+	
+	
+	while (count_2--) {
+		int count = 100;
+		self->starttime = CURRENT_OFFSET();
+		while (count--) {
+			if (ON == 1){
+				*(p) = self-> volume * self->mute;
+				ON = 0;
+			}
+			if (ON == 0){
+				*(p) = 0;
+				ON = 1;
+			}
+		}
+		self->endtime = CURRENT_OFFSET();
+		self->totalTime += self->endtime - self->starttime; 
+		self->maxTime = self->maxTime > (self->endtime - self->starttime) ? self->maxTime : (self->endtime - self->starttime);
+	}
 	snprintf(self->buff, sizeof(self->buff), "\nTotal Time for 100 rounds: %ld\n", self->totalTime);
+	SCI_WRITE(&sci0, self->buff);
+	snprintf(self->buff, sizeof(self->buff), "\n9 * Max Time: %ld\n", self->maxTime);
 	SCI_WRITE(&sci0, self->buff);
 	
 /*	if (self->cnt %10 == 9) {
