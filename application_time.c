@@ -236,7 +236,7 @@ void startApp(App *self, int arg) {
     msg.buff[5] = 0;
     CAN_SEND(&can0, &msg);
 	ASYNC(&sound_0, play_sound, 1);
-	ASYNC(&background_load, bg_loops, 0);
+	// ASYNC(&background_load, bg_loops, 0);
 }
 //main.c  ------------------------------------------------------------------------------------------------------
 int main() {
@@ -252,24 +252,34 @@ int main() {
 //sound.c -------------------------------------------------------------------------------------------------------
 
 void play_sound(ObjSound* self, int ON){
-		
-	if (self->cnt %10== 0) {
-		self->start = CURRENT_OFFSET();
-	}
-		
+			
 	int* p = (int*)0x4000741C;
-	if (ON == 1){
-		*(p) = self-> volume * self->mute;
-	}
-	if (ON == 0){
-		*(p) = 0;
+	int count = 100;
+	self->starttime = CURRENT_OFFSET();
+	while (count--) {
+		if (ON == 1){
+			*(p) = self-> volume * self->mute;
+			ON = 0;
+		}
+		if (ON == 0){
+			*(p) = 0;
+			ON = 1;
+		}
 	}
 	
-	if (self->cnt %10==9) {
+	self->endtime = CURRENT_OFFSET();
+	self->totalTime = self->endtime - self->starttime; 
+	snprintf(self->buff, sizeof(self->buff), "\nTotal Time for 100 rounds: %ld\n", self->totalTime);
+	SCI_WRITE(&sci0, self->buff);
+	
+/*	if (self->cnt %10 == 9) {
 		self->end = CURRENT_OFFSET();
-		if (self->cnt< 500) {
+		if (self->cnt < 500) {
 			self->totalTime += self->end - self->start; 
 			self->maxTime = self->maxTime > (self->end - self->start) ? self->maxTime : (self->end - self->start);
+			
+			snprintf(self->buff, sizeof(self->buff), "\n9 * CUrrent Max Time: %ld\n", self->maxTime);
+			SCI_WRITE(&sci0, self->buff);
 		}
 		if (self->cnt == 500) {
 			snprintf(self->buff, sizeof(self->buff), "\nTotal Time: %ld\n", self->totalTime);
@@ -289,7 +299,7 @@ void play_sound(ObjSound* self, int ON){
 	else {
 		
 		AFTER(USEC(500000 / self->sound_freq), self, play_sound, (ON + 1) % 2);
-	}
+	}*/
 }
 
 void set_key(ObjSound* self, int _key) {
