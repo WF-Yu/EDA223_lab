@@ -7,6 +7,8 @@
  * 4. to clear the history of numbers typer 'f' or 'F'
  * 5. If you accidentally typed characteres other than numbers, you should use 'f' to clear the buffer and reset
  * 
+ * Note: background load and calculate median functions are disabled in this version
+ * 
  * To sumarize: 
  * 	e	: delimeter of integer input
  * 	f, F: clear sumary 
@@ -14,6 +16,10 @@
  * 	u, d: up, down volume
  * 	h, l: higher, lower background load
  *  s: sound and background ddl enable toggle button
+ *  i: dicrease the key 
+ *  o: increse the key
+ *  z: increas the tempo
+ *  x: decrease the tempo
 
  * */
 #include "TinyTimber.h"
@@ -137,7 +143,7 @@ void read_integer(App *self, int c) {
 		self->num[2] = 0;
 		self->sum = 0;
 		SCI_WRITE(&sci0, "The 3-history has been erased!\n");
-	}else if (c != 'e' ) {
+	}else if (c != 'e') {
 		if (self->i < (self->buffsize-1) ){
 		self->buff[self->i++] = c;
 		}
@@ -171,6 +177,7 @@ void read_integer(App *self, int c) {
 	ASYNC(&sound_0, set_ddl_sound, c);	
 	ASYNC(&sound_0, set_volume, c);
 	ASYNC(&ctrl_obj, set_tempo, c);
+	ASYNC(&ctrl_obj, set_key, c);
 }
 
 void startApp(App *self, int arg) {
@@ -314,8 +321,26 @@ void go_play(Controller* self, int unused) {
 	
 }
 
-void set_key(Controller* self, int _key) {
-	self->key = _key;	
+void set_key(Controller* self, int c) {
+	switch (c) {
+		case 'o':				// key up
+			if (self->key < 5) {
+				self->key += 1;
+			}
+			snprintf(self->buff, sizeof(self->buff), "\nCurrent key is: %d\n", self->key);
+			SCI_WRITE(&sci0, self->buff);
+		break;
+		
+		case 'i':				// key down
+			if (self->key > -5) {
+				self->key -= 1;
+			}
+			snprintf(self->buff, sizeof(self->buff), "\nCurrent key is: %d\n", self->key);
+			SCI_WRITE(&sci0, self->buff);
+		break;
+		
+		default:;
+	}
 }
 
 //   display the new period and freq according to new key 
@@ -345,16 +370,16 @@ void display_period(Controller* self, int unused) {
 void set_tempo(Controller* self, int c) {
 	switch (c) {
 		case 'z':				// tempo up
-			if (self->tempo < 1000) {
-				self->tempo += 10;
+			if (self->tempo < 240) {
+				self->tempo += 1;
 			}
 			snprintf(self->buff, sizeof(self->buff), "\nCurrent tempo is: %d\n", self->tempo);
 			SCI_WRITE(&sci0, self->buff);
 		break;
 		
 		case 'x':				//tempo down
-			if (self->tempo > 20) {
-				self->tempo -= 10;
+			if (self->tempo > 60) {
+				self->tempo -= 1;
 			}
 			snprintf(self->buff, sizeof(self->buff), "\nCurrent tempo is: %d\n", self->tempo);
 			SCI_WRITE(&sci0, self->buff);
