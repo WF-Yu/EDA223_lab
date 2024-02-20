@@ -21,12 +21,12 @@
 #include "canTinyTimber.h"
 #include <stdlib.h>
 #include <stdio.h>
+#include <math.h>
 
 #define init_freq_index() {0,2,4,0,0,2,4,0,4,5,7,4,5,7,7,9,7,5,4,0,7,9,7,5,4,0,0,-5,0,0,-5,0}
 #define init_period() {2024,1911,1803,1702,1607,1516,1431,1351,1275,1203,1136,1072,1012,955,901,851,803,758,715,675,637,601,568,536,506}
-#define init_note_length() {500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 1000, 500, 500, 1000, 250, 250, 250, 250, 500, 500, 250, 250, 250, 250, 500, 500, 500, 500, 1000, 500, 500, 1000}
-
-//{a a a a a a a a a a b a a b c c c c a a c c c c a a a a b a a b}
+#define init_note_length() {2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 4, 2, 2, 4, 1, 1, 1, 1, 2, 2, 1, 1, 1, 1, 2, 2, 2, 2, 4, 2, 2, 4}
+                         //{a, a, a, a, a, a, a, a, a, a, b, a, a, b, c, c, c, c, a, a, c, c, c, c, a, a, a, a, b, a, a, b}
 	
 typedef struct {
 	Object super;
@@ -36,6 +36,7 @@ typedef struct {
 	int sound_freq;
 	int ddl_en; // deadline_enable
 	int ddl;
+	int silent_flag;  // 1 means silence
 } ObjSound;
 
 typedef struct {
@@ -51,7 +52,6 @@ typedef struct {
 	int sum;
 	int median;
 } App;
-
 	
 typedef struct {
     Object super;
@@ -64,7 +64,6 @@ typedef struct {
 	int index; // current tone to play
 	int totalTones; // number of tones in our music
 } Controller;
-
 
 typedef struct {
 	Object super;
@@ -81,30 +80,32 @@ void read_integer(App*, int);
 void find_median(App* , int );
 void print_info(App*, int);
 
+//-------------- tone generator
 void play_sound(ObjSound*, int);
 // void set_key(ObjSound* self, int _key);
 void set_volume(ObjSound* self, int c);		
 void set_ddl_sound(ObjSound*, int);
 void set_freq(ObjSound*, int freq);
 void make_silence(ObjSound* self, int unused);
+void clear_silence(ObjSound* self, int unused);
 
-
-
+// -------------- music player controller
 void go_play(Controller* self, int c);
 void set_key(Controller* self, int _key);
 void keyboard_input(Controller* self, int c);
-void calc_period(Controller* self, int unused);
+void display_period(Controller* self, int unused);
+void set_tempo(Controller* self, int c);
 
-
+//  --------------- Background load
 void bg_loops(Background_load*, int);
 void set_bg_load(Background_load* self, int c);
 void set_ddl_bg(Background_load*, int);
 
 
 App app = { initObject(), 0, 'X', 20, 0, {0}, {0}, 0, 0, 0, 0};
-ObjSound sound_0 = {initObject(), {0}, 5, 1, 1000, 0, 100};
+ObjSound sound_0 = {initObject(), {0}, 4, 1, 1000, 1, 900, 0};
 Controller ctrl_obj = {initObject(), {0}, init_freq_index(), init_period(), init_note_length(), 0, 120, 0, 32};
-Background_load background_load = {initObject(), {0}, 1000, 1300, 0, 1300};
+Background_load background_load = {initObject(), {0}, 0, 1300, 0, 1300};
 
 Serial sci0 = initSerial(SCI_PORT0, &app, reader);
 Can can0 = initCan(CAN_PORT0, &app, receiver);
@@ -124,10 +125,9 @@ void reader(App *self, int c) {
 	ASYNC(self,read_integer,c);	
 }
 
-
 /* output integer input form uart */
 void read_integer(App *self, int c) {
-	int k;
+//	int k;
 	if ( (c == 'f') | (c == 'F')){
 		self->rdcnt = 0;
 		self->wrcnt = 0;
@@ -149,16 +149,12 @@ void read_integer(App *self, int c) {
 		self->buff[self->i] = '\0';
 		self->num[self->wrcnt] = atoi(self->buff);
 		
-		// self->key = atoi(self->buff);
 		ASYNC(&ctrl_obj, set_key, atoi(self->buff));
 		
-		ASYNC(&ctrl_obj, calc_period, 0);
+		ASYNC(&ctrl_obj, display_period, 0);
 		
 		self->i = 0;
-		self->sum = 0;
-		for (k=0; k<= self->rdcnt; k++){
-			self->sum += self->num[k];
-		}		
+		
 		/*update the write conuter*/
 		if (self->wrcnt <2){
 			self->wrcnt++;
@@ -166,12 +162,15 @@ void read_integer(App *self, int c) {
 		else {
 			self->wrcnt =0;
 		}
-		
-		/*find the mdian value*/
-		// ASYNC(self, find_median, 0);
+				
 	}
 	
-	// 
+//	ASYNC(&background_load, set_ddl_bg, c);
+//	ASYNC(&background_load, set_bg_load, c);
+	
+	ASYNC(&sound_0, set_ddl_sound, c);	
+	ASYNC(&sound_0, set_volume, c);
+	ASYNC(&ctrl_obj, set_tempo, c);
 }
 
 void startApp(App *self, int arg) {
@@ -192,38 +191,46 @@ void startApp(App *self, int arg) {
     msg.buff[5] = 0;
     CAN_SEND(&can0, &msg);
 	ASYNC(&ctrl_obj, go_play, 0); // start music controller
+	// start the tone generator
+	ASYNC(&sound_0, play_sound, 0);
 }
 //main.c  ------------------------------------------------------------------------------------------------------
 int main() {
     INSTALL(&sci0, sci_interrupt, SCI_IRQ0);
 	INSTALL(&can0, can_interrupt, CAN_IRQ0);
     TINYTIMBER(&app, startApp, 0);
-	//TINYTIMBER(&sound_0, play_sound, 1);
     return 0;
 }
-
 
 //  sound generator part soudn.c
 //sound.c -------------------------------------------------------------------------------------------------------
 void play_sound(ObjSound* self, int ON){
-	int* p = (int*)0x4000741C;
+	int* p = (int*)0x4000741C;		// device address
+	
 	if (ON == 1){
-		*(p) = self-> volume * self->mute;
+		if (self->silent_flag){
+			*(p) = 0;
+		}
+		else{
+			*(p) = self-> volume * self->mute;	// write the volume to the device addr
+		}
 	}
 	if (ON == 0){
-		*(p) = 0;
+		*(p) = 0;							// write 0 to the device addr
 	}
-	
-	if (self->ddl_en) {
+		
+	if (self->ddl_en) {					// enable deadline
 		SEND(USEC(500000 / self->sound_freq), USEC(self->ddl), self, play_sound, (ON + 1) % 2);
 	}
 	else {
-		AFTER(USEC(500000 / self->sound_freq), self, play_sound, (ON + 1) % 2);
+		AFTER(USEC(500000 / self->sound_freq), self, play_sound, (ON + 1) % 2);		// disable deadline
 	}
 }
+
+
 void set_volume(ObjSound* self, int c) {
 	switch (c) {
-		case 'u':
+		case 'u':				// volume up
 			if (self->volume < 20) {
 				self->volume += 1;
 			}
@@ -231,7 +238,7 @@ void set_volume(ObjSound* self, int c) {
 			SCI_WRITE(&sci0, self->buff);
 		break;
 		
-		case 'd':
+		case 'd':				//volume down
 			if (self->volume > 0) {
 				self->volume -= 1;
 			}
@@ -239,7 +246,7 @@ void set_volume(ObjSound* self, int c) {
 			SCI_WRITE(&sci0, self->buff);
 		break;
 		
-		case 'm':
+		case 'm':				// mute
 			self->mute = self->mute==0?1:0;
 			snprintf(self->buff, sizeof(self->buff), "\nCurrent Volume is: %d\n", self->volume * self->mute);
 			SCI_WRITE(&sci0, self->buff);
@@ -248,9 +255,16 @@ void set_volume(ObjSound* self, int c) {
 		default:;
 	}
 }
+
 void make_silence(ObjSound* self, int unused) {
-	self->sound_freq = 0;
+	self->silent_flag = 1; 			
+//	SEND(MSEC(58), MSEC(2), self, clear_silence, 0);
 }
+
+void clear_silence(ObjSound* self, int unused) {
+	self->silent_flag = 0; 			
+}
+
 void set_ddl_sound(ObjSound* self, int c) {
 	if (c == 's') {
 		self->ddl_en = self->ddl_en == 0 ? 1 : 0;
@@ -265,24 +279,47 @@ void set_freq(ObjSound* self, int _freq){
 
 // --Controller.c --------------------------------------------------------------------------------------------------------------------------------
 void go_play(Controller* self, int unused) {
-	// get frequency and length, call tone generator, call mute, and call itself
-	ASYNC(&sound_0, set_freq, self->freq_index[self->index]);
+	int cur_beat_length = 0;
+//	int nxt_beat_length = 0;
+	// calculate the frequency index according to key
+	int _freq_index = self->freq_index[self->index]+self->key;
+	int _period_index = _freq_index + 10;
+	int current_freq ;
+	// calculate the current frequency
+	current_freq = 1000000/(2*self->period[_period_index]);
+			
+	// set the frequency, highest priority
+//	SEND(USEC(0), USEC(100), &sound_0, set_freq, current_freq);
+	SYNC(&sound_0, set_freq, current_freq);
 	
-	// leave 100 ms for silence
-	AFTER(MSEC(self->note_len[self->index] - 100), &sound_0, make_silence, 0);
+	// calculate the beat length
+	cur_beat_length = self->note_len[self->index] * 30000 / self->tempo;
 	
-
-	// loop within the segments
-	if (self->index < self->totalTones) { self->index++; }
+	// leave 60 ms for silence
+	SEND(MSEC(cur_beat_length - 60), USEC(100), &sound_0, make_silence, 1);
+	// reset the silent flag
+	SEND(MSEC(cur_beat_length-1), USEC(100),&sound_0, clear_silence, 0);
+	// call itself to achieve the periodic play
+	SEND(MSEC(cur_beat_length), USEC(100), self, go_play, 0);
+	
+	// loop within the music segments
+	if (self->index < (self->totalTones -1)) { 
+		self->index++; 
+	}
 	else {self->index = 0;}
+//	
+//	// calculate the next beat length
+//	nxt_beat_length = self->note_len[self->index] * 30000 / self->tempo;
 	
-	AFTER(MSEC(self->note_len[self->index]), self, go_play, 0);
+	
 }
+
 void set_key(Controller* self, int _key) {
 	self->key = _key;	
 }
 
-void calc_period(Controller* self, int unused) {
+//   display the new period and freq according to new key 
+void display_period(Controller* self, int unused) {
 	int x = self->key + 10;
 	int new_freq_index[32] = {0};
 	int new_period[32] = {0};
@@ -305,11 +342,27 @@ void calc_period(Controller* self, int unused) {
 }
 
 
-void set_tempo(Controller* self, int _tempo) {
-	self->tempo = _tempo;	
-	// .....
+void set_tempo(Controller* self, int c) {
+	switch (c) {
+		case 'z':				// tempo up
+			if (self->tempo < 1000) {
+				self->tempo += 10;
+			}
+			snprintf(self->buff, sizeof(self->buff), "\nCurrent tempo is: %d\n", self->tempo);
+			SCI_WRITE(&sci0, self->buff);
+		break;
+		
+		case 'x':				//tempo down
+			if (self->tempo > 20) {
+				self->tempo -= 10;
+			}
+			snprintf(self->buff, sizeof(self->buff), "\nCurrent tempo is: %d\n", self->tempo);
+			SCI_WRITE(&sci0, self->buff);
+		break;
+		
+		default:;
+	}
 }
-
 
 // -----------------------------------------------------------------
 void bg_loops(Background_load* self, int unused) {
