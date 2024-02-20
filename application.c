@@ -192,13 +192,25 @@ void read_integer(App *self, int c) {
 			}
 			break;
 
-		default :
+		case '0' :
+		case '1' :
+		case '2' :
+		case '3' :
+		case '4' :
+		case '5' :
+		case '6' :
+		case '7' :
+		case '8' :
+		case '9' :
+		case '-' :
 			if (self->i < (self->buffsize-1) ){
 				self->buff[self->i++] = c;
 			}
 			else {
 				 SCI_WRITE(&sci0, "Warning: Int Buffer reaches the max legnth!\n");
 			}
+			
+		default :;
 	}
 		
 //	ASYNC(&background_load, set_ddl_bg, c);
@@ -309,6 +321,7 @@ void set_freq(ObjSound* self, int _freq){
 // --Controller.c --------------------------------------------------------------------------------------------------------------------------------
 void go_play(Controller* self, int unused) {
 	int cur_beat_length = 0;
+	int _silent_time = 0;
 	// calculate the frequency index according to key
 	int _freq_index = self->freq_index[self->index]+self->key;
 	int _period_index = _freq_index + 10;
@@ -319,8 +332,21 @@ void go_play(Controller* self, int unused) {
 	SYNC(&sound_0, set_freq, current_freq);
 	// calculate the beat length
 	cur_beat_length = self->note_len[self->index] * 30000 / self->tempo;
+	// dynamic slience time
+	if(self->tempo>=60 && self->tempo < 100){
+		_silent_time = 100;
+	}
+	if(self->tempo>=100 && self->tempo < 140){
+		_silent_time = 80;
+	}
+	if(self->tempo>=140 && self->tempo < 180){
+		_silent_time = 60;
+	}
+	if(self->tempo>=180 && self->tempo <= 240){
+		_silent_time = 50;
+	}
 	// leave 60 ms for silence
-	SEND(MSEC(cur_beat_length - 60), USEC(100), &sound_0, make_silence, 1);
+	SEND(MSEC(cur_beat_length - _silent_time), USEC(100), &sound_0, make_silence, 1);
 	// reset the silent flag
 	SEND(MSEC(cur_beat_length-1), USEC(100),&sound_0, make_silence, 0);
 	// call itself to achieve the periodic play
