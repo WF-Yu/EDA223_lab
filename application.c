@@ -1,11 +1,12 @@
 /*
  *  User Guide ******************
  * 1. after load the program, type 'go' to start the application
- * 2. the application can save up to three intergers less than 20 digits each 
- * 3. to input the integer , you first type the negative sign (fo negative bumber), 
- *    and then type each digit, after all digits are typed, type 'e' as the delimiter
- * 4. to clear the history of numbers typer 'f' or 'F'
- * 5. If you accidentally typed characteres other than numbers, you should use 'f' to clear the buffer and reset
+ * 2. the music player will automatically start to play brother johns
+ * 3. with default volume 4, key 0, tempo 120bpm
+ * 4. could press 'u' to increase volume, 'd' to decrease volume
+ * 5. could press 'm' to mute;
+ * 6. to change the key: input the integer value and press 'k' as delimeter
+ * 7. to change the tempo: input the integer value and press 't' as delimeter
  * 
  * Note: background load and calculate median functions are disabled in this version
  * 
@@ -16,10 +17,8 @@
  * 	u, d: up, down volume
  * 	h, l: higher, lower background load
  *  s: sound and background ddl enable toggle button
- *  i: dicrease the key 
- *  o: increse the key
- *  z: increas the tempo
- *  x: decrease the tempo
+ *  k: delimeter of integer key input
+ *  t: delimeter of integer tempo input
 
  * */
 #include "TinyTimber.h"
@@ -88,7 +87,6 @@ void print_info(App*, int);
 
 //-------------- tone generator
 void play_sound(ObjSound*, int);
-// void set_key(ObjSound* self, int _key);
 void set_volume(ObjSound* self, int c);		
 void set_ddl_sound(ObjSound*, int);
 void set_freq(ObjSound*, int freq);
@@ -98,9 +96,9 @@ void clear_silence(ObjSound* self, int unused);
 // -------------- music player controller
 void go_play(Controller* self, int c);
 void set_key(Controller* self, int _key);
-void keyboard_input(Controller* self, int c);
+void set_tempo(Controller* self, int _tempo);
 void display_period(Controller* self, int unused);
-void set_tempo(Controller* self, int c);
+
 
 //  --------------- Background load
 void bg_loops(Background_load*, int);
@@ -133,51 +131,80 @@ void reader(App *self, int c) {
 
 /* output integer input form uart */
 void read_integer(App *self, int c) {
-//	int k;
-	if ( (c == 'f') | (c == 'F')){
-		self->rdcnt = 0;
-		self->wrcnt = 0;
-		self->i = 0;
-		self->num[0] = 0;
-		self->num[1] = 0;
-		self->num[2] = 0;
-		self->sum = 0;
-		SCI_WRITE(&sci0, "The 3-history has been erased!\n");
-	}else if (c != 'e') {
-		if (self->i < (self->buffsize-1) ){
-		self->buff[self->i++] = c;
-		}
-		else {
-			 //SCI_WRITE(&sci0, "Warning: Buffer reaches the max legnth!\n");
-		}
+	switch(c){
+		case 'f': 
+			self->rdcnt = 0;
+			self->wrcnt = 0;
+			self->i = 0;
+			self->num[0] = 0;
+			self->num[1] = 0;
+			self->num[2] = 0;
+			self->sum = 0;
+			SCI_WRITE(&sci0, "The history has been erased!\n");
+			break;
+			
+		case 'e':
+			self->buff[self->i] = '\0';
+			self->num[self->wrcnt] = atoi(self->buff);
+			self->i = 0;
+			snprintf(self->buff, sizeof(self->buff), "\nInput integer is: %d\n", self->num[self->wrcnt]);
+			SCI_WRITE(&sci0, self->buff);
+			/*update the write conuter*/
+			if (self->wrcnt <2){
+				self->wrcnt++;
+			}
+			else {
+				self->wrcnt =0;
+			}
+			break;
+			
+		case 'k':
+			self->buff[self->i] = '\0';
+			self->num[self->wrcnt] = atoi(self->buff);
+			self->i = 0;
+			
+			// set the key
+			ASYNC(&ctrl_obj, set_key, self->num[self->wrcnt]);
+			
+			/*update the write conuter*/
+			if (self->wrcnt <2){
+				self->wrcnt++;
+			}
+			else {
+				self->wrcnt =0;
+			}
+			break;
+			
+		case 't':
+			self->buff[self->i] = '\0';
+			self->num[self->wrcnt] = atoi(self->buff);
+			self->i = 0;
+			
+			// set the key
+			ASYNC(&ctrl_obj, set_tempo, self->num[self->wrcnt]);
+			
+			/*update the write conuter*/
+			if (self->wrcnt <2){
+				self->wrcnt++;
+			}
+			else {
+				self->wrcnt =0;
+			}
+			break;
+
+		default :
+			if (self->i < (self->buffsize-1) ){
+				self->buff[self->i++] = c;
+			}
+			else {
+				 SCI_WRITE(&sci0, "Warning: Int Buffer reaches the max legnth!\n");
+			}
 	}
-	else{
-		self->buff[self->i] = '\0';
-		self->num[self->wrcnt] = atoi(self->buff);
 		
-		ASYNC(&ctrl_obj, set_key, atoi(self->buff));
-		
-		ASYNC(&ctrl_obj, display_period, 0);
-		
-		self->i = 0;
-		
-		/*update the write conuter*/
-		if (self->wrcnt <2){
-			self->wrcnt++;
-		}
-		else {
-			self->wrcnt =0;
-		}
-				
-	}
-	
 //	ASYNC(&background_load, set_ddl_bg, c);
 //	ASYNC(&background_load, set_bg_load, c);
-	
 	ASYNC(&sound_0, set_ddl_sound, c);	
 	ASYNC(&sound_0, set_volume, c);
-	ASYNC(&ctrl_obj, set_tempo, c);
-	ASYNC(&ctrl_obj, set_key, c);
 }
 
 void startApp(App *self, int arg) {
@@ -197,7 +224,8 @@ void startApp(App *self, int arg) {
     msg.buff[4] = 'o';
     msg.buff[5] = 0;
     CAN_SEND(&can0, &msg);
-	ASYNC(&ctrl_obj, go_play, 0); // start music controller
+	// start music controller
+	ASYNC(&ctrl_obj, go_play, 0); 
 	// start the tone generator
 	ASYNC(&sound_0, play_sound, 0);
 }
@@ -234,7 +262,6 @@ void play_sound(ObjSound* self, int ON){
 	}
 }
 
-
 void set_volume(ObjSound* self, int c) {
 	switch (c) {
 		case 'u':				// volume up
@@ -263,13 +290,8 @@ void set_volume(ObjSound* self, int c) {
 	}
 }
 
-void make_silence(ObjSound* self, int unused) {
-	self->silent_flag = 1; 			
-//	SEND(MSEC(58), MSEC(2), self, clear_silence, 0);
-}
-
-void clear_silence(ObjSound* self, int unused) {
-	self->silent_flag = 0; 			
+void make_silence(ObjSound* self, int _silence) {
+	self->silent_flag = _silence; 
 }
 
 void set_ddl_sound(ObjSound* self, int c) {
@@ -281,65 +303,43 @@ void set_ddl_sound(ObjSound* self, int c) {
 }
 
 void set_freq(ObjSound* self, int _freq){
-	self->sound_freq = _freq;
+	self->sound_freq = _freq;	// 1 is set, 0 is clear
 }
 
 // --Controller.c --------------------------------------------------------------------------------------------------------------------------------
 void go_play(Controller* self, int unused) {
 	int cur_beat_length = 0;
-//	int nxt_beat_length = 0;
 	// calculate the frequency index according to key
 	int _freq_index = self->freq_index[self->index]+self->key;
 	int _period_index = _freq_index + 10;
 	int current_freq ;
 	// calculate the current frequency
 	current_freq = 1000000/(2*self->period[_period_index]);
-			
 	// set the frequency, highest priority
-//	SEND(USEC(0), USEC(100), &sound_0, set_freq, current_freq);
 	SYNC(&sound_0, set_freq, current_freq);
-	
 	// calculate the beat length
 	cur_beat_length = self->note_len[self->index] * 30000 / self->tempo;
-	
 	// leave 60 ms for silence
 	SEND(MSEC(cur_beat_length - 60), USEC(100), &sound_0, make_silence, 1);
 	// reset the silent flag
-	SEND(MSEC(cur_beat_length-1), USEC(100),&sound_0, clear_silence, 0);
+	SEND(MSEC(cur_beat_length-1), USEC(100),&sound_0, make_silence, 0);
 	// call itself to achieve the periodic play
 	SEND(MSEC(cur_beat_length), USEC(100), self, go_play, 0);
-	
 	// loop within the music segments
 	if (self->index < (self->totalTones -1)) { 
 		self->index++; 
 	}
-	else {self->index = 0;}
-//	
-//	// calculate the next beat length
-//	nxt_beat_length = self->note_len[self->index] * 30000 / self->tempo;
-	
-	
+	else {self->index = 0;}	
 }
 
-void set_key(Controller* self, int c) {
-	switch (c) {
-		case 'o':				// key up
-			if (self->key < 5) {
-				self->key += 1;
-			}
-			snprintf(self->buff, sizeof(self->buff), "\nCurrent key is: %d\n", self->key);
-			SCI_WRITE(&sci0, self->buff);
-		break;
-		
-		case 'i':				// key down
-			if (self->key > -5) {
-				self->key -= 1;
-			}
-			snprintf(self->buff, sizeof(self->buff), "\nCurrent key is: %d\n", self->key);
-			SCI_WRITE(&sci0, self->buff);
-		break;
-		
-		default:;
+void set_key(Controller* self, int _key) {
+	if (_key>=-5 && _key <=5){
+		self->key = _key;
+		snprintf(self->buff, sizeof(self->buff), "\nCurrent key is: %d\n", self->key);
+		SCI_WRITE(&sci0, self->buff);
+	}
+	else{
+		SCI_WRITE(&sci0, "\nAttention: Key should be between [-5,5]\n");
 	}
 }
 
@@ -366,27 +366,16 @@ void display_period(Controller* self, int unused) {
 	}
 }
 
-
-void set_tempo(Controller* self, int c) {
-	switch (c) {
-		case 'z':				// tempo up
-			if (self->tempo < 240) {
-				self->tempo += 1;
-			}
-			snprintf(self->buff, sizeof(self->buff), "\nCurrent tempo is: %d\n", self->tempo);
-			SCI_WRITE(&sci0, self->buff);
-		break;
-		
-		case 'x':				//tempo down
-			if (self->tempo > 60) {
-				self->tempo -= 1;
-			}
-			snprintf(self->buff, sizeof(self->buff), "\nCurrent tempo is: %d\n", self->tempo);
-			SCI_WRITE(&sci0, self->buff);
-		break;
-		
-		default:;
+void set_tempo(Controller* self, int _tempo) {
+	if(_tempo <=240 && _tempo>=60){
+		self->tempo = _tempo;
+		snprintf(self->buff, sizeof(self->buff), "\nCurrent tempo is: %d\n", self->tempo);
+		SCI_WRITE(&sci0, self->buff);
 	}
+	else{
+		SCI_WRITE(&sci0, "\nAttention: Tempo should be between [60,240] bpm\n");
+	}
+	
 }
 
 // -----------------------------------------------------------------
