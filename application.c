@@ -19,6 +19,9 @@
  *  s: sound and background ddl enable toggle button
  *  k: delimeter of integer key input
  *  t: delimeter of integer tempo input
+ *  c: enter conductor mode
+ *  v: enter musician mode
+ *  p: show current mode
 
  * */
 #include "TinyTimber.h"
@@ -28,11 +31,14 @@
 #include <stdio.h>
 #include <math.h>
 
+#define init_can_msg()	{0,0,0,{0}}
 #define init_freq_index() {0,2,4,0,0,2,4,0,4,5,7,4,5,7,7,9,7,5,4,0,7,9,7,5,4,0,0,-5,0,0,-5,0}
 #define init_period() {2024,1911,1803,1702,1607,1516,1431,1351,1275,1203,1136,1072,1012,955,901,851,803,758,715,675,637,601,568,536,506}
 #define init_note_length() {2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 4, 2, 2, 4, 1, 1, 1, 1, 2, 2, 1, 1, 1, 1, 2, 2, 2, 2, 4, 2, 2, 4}
                          //{a, a, a, a, a, a, a, a, a, a, b, a, a, b, c, c, c, c, a, a, c, c, c, c, a, a, a, a, b, a, a, b}
 	
+#define CAN_PORT1   (CAN_TypeDef *)(CAN2)
+
 typedef struct {
 	Object super;
 	char buff[64];
@@ -54,8 +60,8 @@ typedef struct {
 	int num[3];    /*integer input from uart*/
 	int wrcnt ; 	/*number of integer write into*/
 	int rdcnt;		/*number of integer can be read*/
-	int sum;
-	int median;
+	CANMsg msg;		// CAN msg to send
+	int mode; 		// 0 conductor, 1 musician, 3 default
 } App;
 	
 typedef struct {
@@ -79,11 +85,12 @@ typedef struct {
 	int ddl;
 } Background_load;
 
+//------------------App methods
 void reader(App*, int);
 void receiver(App*, int);
+void receiver_2(App*, int);
 void read_integer(App*, int);
-void find_median(App* , int );
-void print_info(App*, int);
+void parse_can_msg(App*, int);
 
 //-------------- tone generator
 void play_sound(ObjSound*, int);
@@ -91,7 +98,6 @@ void set_volume(ObjSound* self, int c);
 void set_ddl_sound(ObjSound*, int);
 void set_freq(ObjSound*, int freq);
 void make_silence(ObjSound* self, int unused);
-void clear_silence(ObjSound* self, int unused);
 
 // -------------- music player controller
 void go_play(Controller* self, int c);
@@ -106,31 +112,132 @@ void set_bg_load(Background_load* self, int c);
 void set_ddl_bg(Background_load*, int);
 
 
-App app = { initObject(), 0, 'X', 20, 0, {0}, {0}, 0, 0, 0, 0};
+App app = { initObject(), 0, 'X', 20, 0, {0}, {0}, 0, 0, init_can_msg(), 3};
 ObjSound sound_0 = {initObject(), {0}, 4, 1, 1000, 1, 900, 0};
 Controller ctrl_obj = {initObject(), {0}, init_freq_index(), init_period(), init_note_length(), 0, 120, 0, 32};
 Background_load background_load = {initObject(), {0}, 0, 1300, 0, 1300};
 
 Serial sci0 = initSerial(SCI_PORT0, &app, reader);
-Can can0 = initCan(CAN_PORT0, &app, receiver);
+Can can0 = initCan(CAN_PORT0, &app, receiver);     
 
 // app.c-----------------------------------------------------------------------------------------------------------
 void receiver(App *self, int unused) {
-    CANMsg msg;
-    CAN_RECEIVE(&can0, &msg);
-    SCI_WRITE(&sci0, "Can msg received: ");
-    SCI_WRITE(&sci0, msg.buff);
+    CAN_RECEIVE(&can0, &self->msg);
+//    SCI_WRITE(&sci0, "\nCan1 msg received: \n");
+//    SCI_WRITE(&sci0, self->msg.buff);
+	ASYNC(self,parse_can_msg,0);
+}
+
+void parse_can_msg(App *self, int unused) {
+	// only parse the msg when it is in musician mode
+	if(self->mode == 1 ){
+		SCI_WRITE(&sci0, "\nEnter parse CAN msg\n");
+		uchar c = 0, sign_c;
+		int  can_input = 0;
+
+		can_input = self->msg.buff[0]; 
+		c = self->msg.buff[1]; 
+		sign_c = self->msg.buff[2];  // the sign bit 
+		
+		if(sign_c == 'n'){
+			can_input = 0-can_input;
+		}
+		
+//		snprintf(self->buff, sizeof(self->buff), "\nInput integer is: %d\n", can_input);
+//		SCI_WRITE(&sci0, self->buff);
+		snprintf(self->buff, sizeof(self->buff), "\nInput cmd is: %c\n", c);
+		SCI_WRITE(&sci0, self->buff);
+		
+		switch(c){
+			case 'u':
+			case 'd':
+			case 'm':
+				// set volume 
+				ASYNC(&sound_0, set_volume, c);
+				break;
+			case 's':
+				ASYNC(&sound_0, set_ddl_sound, c);
+				break;	
+			case 'k':
+				// set the key
+				ASYNC(&ctrl_obj, set_key, can_input);
+				break;
+			case 't':
+				// set the key
+				ASYNC(&ctrl_obj, set_tempo, can_input);
+				break;	
+			default :;
+		}
+	}
+	
 }
 
 void reader(App *self, int c) {
-    SCI_WRITE(&sci0, "Rcv: \'");
+	CANMsg msg;
+    SCI_WRITE(&sci0, "\nRcv: \'");
     SCI_WRITECHAR(&sci0, c);
     SCI_WRITE(&sci0, "\'\n");
+	switch(c){
+		// conductor mode
+		case 'c':
+			if(self->mode == 3){
+				// only start start the call when power on
+				// start music controller
+				ASYNC(&ctrl_obj, go_play, 0); 
+				// start the tone generator
+				ASYNC(&sound_0, play_sound, 0);
+			}
+			self->mode = 0; 
+			SCI_WRITE(&sci0, "\nEnter Conductor mode\n");
+			break;
+			
+		// musician mode	
+		case 'v':		// go_play and play_sound will start in parse_can_msg()
+			if(self->mode == 3){
+				// only start the call once
+				// start music controller
+				ASYNC(&ctrl_obj, go_play, 0); 
+				// start the tone generator
+				ASYNC(&sound_0, play_sound, 0);
+			}
+			// set the musician mode
+			self->mode = 1; 
+			SCI_WRITE(&sci0, "\nEnter musician mode\n");
+			// prepare and send CAN msg
+			msg.msgId = 1;
+			msg.nodeId = 1;
+			msg.length = 2;
+			msg.buff[0] = 10;	// unused int only to occupy the position
+			msg.buff[1] = 'v';
+			CAN_SEND(&can0, &msg);
+			break;
+			
+		// show current mode
+		case 'p':
+			if(self->mode == 1){
+				SCI_WRITE(&sci0, "\nIn musician mode\n");
+			}
+			if(self->mode == 0){
+				SCI_WRITE(&sci0, "\nIn conductor mode\n");
+			}
+			if(self->mode == 3){
+				SCI_WRITE(&sci0, "\nIn Idle mode\n");
+			}
+			break;
+			
+		default:;	
+	}
+
 	ASYNC(self,read_integer,c);	
+
+
+	
 }
 
 /* output integer input form uart */
 void read_integer(App *self, int c) {
+	CANMsg msg;
+	int tmp =0;
 	switch(c){
 		case 'f': 
 			self->rdcnt = 0;
@@ -139,7 +246,6 @@ void read_integer(App *self, int c) {
 			self->num[0] = 0;
 			self->num[1] = 0;
 			self->num[2] = 0;
-			self->sum = 0;
 			SCI_WRITE(&sci0, "The history has been erased!\n");
 			break;
 			
@@ -157,15 +263,82 @@ void read_integer(App *self, int c) {
 				self->wrcnt =0;
 			}
 			break;
+		
+		case 'c':		
+			// prepare and send CAN msg
+			msg.msgId = 1;
+			msg.nodeId = 1;
+			msg.length = 2;
+			msg.buff[0] = 10;	// unused int only to occupy the position
+			msg.buff[1] = 'c';
+			CAN_SEND(&can0, &msg);
+			break;
+
+		case 'u':
+			// prepare and send CAN msg
+			msg.msgId = 1;
+			msg.nodeId = 1;
+			msg.length = 2;
+			msg.buff[0] = 10;	// unused int only to occupy the position
+			msg.buff[1] = 'u';
+			CAN_SEND(&can0, &msg);
+			break;
+			
+		case 'd':
+			// prepare and send CAN msg
+			msg.msgId = 1;
+			msg.nodeId = 1;
+			msg.length = 2;
+			msg.buff[0] = 10;	// unused int only to occupy the position
+			msg.buff[1] = 'd';
+			CAN_SEND(&can0, &msg);
+			break;	
+			
+		case 'm':
+			// prepare and send CAN msg
+			msg.msgId = 1;
+			msg.nodeId = 1;
+			msg.length = 2;
+			msg.buff[0] = 10;	// unused int only to occupy the position
+			msg.buff[1] = 'm';
+			CAN_SEND(&can0, &msg);
+			break;
+			
+		case 's':
+			// prepare and send CAN msg
+			msg.msgId = 1;
+			msg.nodeId = 1;
+			msg.length = 2;
+			msg.buff[0] = 10;	// unused int only to occupy the position
+			msg.buff[1] = 's';
+			CAN_SEND(&can0, &msg);
+			break;	
 			
 		case 'k':
 			self->buff[self->i] = '\0';
 			self->num[self->wrcnt] = atoi(self->buff);
 			self->i = 0;
 			
-			// set the key
-			ASYNC(&ctrl_obj, set_key, self->num[self->wrcnt]);
-			
+			// prepare and send CAN msg
+			msg.msgId = 1;
+			msg.nodeId = 1;
+			msg.length = 3;			
+			if(self->num[self->wrcnt]<0){
+				tmp = abs(self->num[self->wrcnt]);
+				msg.buff[2] = 'n';		// negative
+			}
+			else{
+				tmp = self->num[self->wrcnt];
+				msg.buff[2] = 'p';	//positive
+			}			
+			msg.buff[0] = tmp;
+			msg.buff[1] = 'k';
+			CAN_SEND(&can0, &msg);
+			// only carry out execution in conductor mode
+			if (self->mode == 0){
+				// set the key
+				ASYNC(&ctrl_obj, set_key, self->num[self->wrcnt]);
+			}
 			/*update the write conuter*/
 			if (self->wrcnt <2){
 				self->wrcnt++;
@@ -179,10 +352,26 @@ void read_integer(App *self, int c) {
 			self->buff[self->i] = '\0';
 			self->num[self->wrcnt] = atoi(self->buff);
 			self->i = 0;
+			// prepare and send CAN msg
+			msg.msgId = 1;
+			msg.nodeId = 1;
+			msg.length = 3;			
+			if(self->num[self->wrcnt]<0){
+				tmp = abs(self->num[self->wrcnt]);
+				msg.buff[2] = 'n';	//negative
+			}
+			else{
+				tmp = self->num[self->wrcnt];
+				msg.buff[2] = 'p';	//positive
+			}			
+			msg.buff[0] = tmp;
+			msg.buff[1] = 't';
 			
-			// set the key
-			ASYNC(&ctrl_obj, set_tempo, self->num[self->wrcnt]);
-			
+			CAN_SEND(&can0, &msg);
+			if (self->mode == 0){
+				// set the key
+				ASYNC(&ctrl_obj, set_tempo, self->num[self->wrcnt]);
+			}
 			/*update the write conuter*/
 			if (self->wrcnt <2){
 				self->wrcnt++;
@@ -212,11 +401,10 @@ void read_integer(App *self, int c) {
 			
 		default :;
 	}
-		
-//	ASYNC(&background_load, set_ddl_bg, c);
-//	ASYNC(&background_load, set_bg_load, c);
-	ASYNC(&sound_0, set_ddl_sound, c);	
-	ASYNC(&sound_0, set_volume, c);
+	if (self->mode == 0){
+		ASYNC(&sound_0, set_ddl_sound, c);	
+		ASYNC(&sound_0, set_volume, c);
+	}
 }
 
 void startApp(App *self, int arg) {
@@ -236,10 +424,7 @@ void startApp(App *self, int arg) {
     msg.buff[4] = 'o';
     msg.buff[5] = 0;
     CAN_SEND(&can0, &msg);
-	// start music controller
-	ASYNC(&ctrl_obj, go_play, 0); 
-	// start the tone generator
-	ASYNC(&sound_0, play_sound, 0);
+
 }
 //main.c  ------------------------------------------------------------------------------------------------------
 int main() {
@@ -281,7 +466,7 @@ void set_volume(ObjSound* self, int c) {
 				self->volume += 1;
 			}
 			snprintf(self->buff, sizeof(self->buff), "\nCurrent Volume is: %d\n", self->volume);
-			SCI_WRITE(&sci0, self->buff);
+			SCI_WRITE(&sci0, self->buff);			
 		break;
 		
 		case 'd':				//volume down
@@ -404,7 +589,7 @@ void set_tempo(Controller* self, int _tempo) {
 	
 }
 
-// -----------------------------------------------------------------
+// background load .c-----------------------------------------------------------------
 void bg_loops(Background_load* self, int unused) {
 	int cnt = self->background_loop_range;
 	while(cnt--);
