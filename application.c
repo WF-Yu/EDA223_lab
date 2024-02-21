@@ -19,9 +19,11 @@
  *  s: sound and background ddl enable toggle button
  *  k: delimeter of integer key input
  *  t: delimeter of integer tempo input
- *  c: enter conductor mode
- *  v: enter musician mode
+ *  c: enter conductor mode start play
+ *  v: enter musician mode start play
  *  p: show current mode
+ *  q: to stop play
+ *  b: begin to play
 
  * */
 #include "TinyTimber.h"
@@ -48,6 +50,7 @@ typedef struct {
 	int ddl_en; // deadline_enable
 	int ddl;
 	int silent_flag;  // 1 means silence
+	int _ON;		 // on switch, 1 means on , 0 means off
 } ObjSound;
 
 typedef struct {
@@ -62,6 +65,7 @@ typedef struct {
 	int rdcnt;		/*number of integer can be read*/
 	CANMsg msg;		// CAN msg to send
 	int mode; 		// 0 conductor, 1 musician, 3 default
+	int _already_ON;  // flag for already started the recursive func
 } App;
 	
 typedef struct {
@@ -73,7 +77,8 @@ typedef struct {
 	int key;
 	int tempo; // in BPM
 	int index; // current tone to play
-	int totalTones; // number of tones in our music
+	int totalTones; // number of tones in our music	
+	int _ON;		 // on switch, 1 means on , 0 means off
 } Controller;
 
 typedef struct {
@@ -91,6 +96,7 @@ void receiver(App*, int);
 void receiver_2(App*, int);
 void read_integer(App*, int);
 void parse_can_msg(App*, int);
+void reset_mode(App*, int);	
 
 //-------------- tone generator
 void play_sound(ObjSound*, int);
@@ -98,12 +104,14 @@ void set_volume(ObjSound* self, int c);
 void set_ddl_sound(ObjSound*, int);
 void set_freq(ObjSound*, int freq);
 void make_silence(ObjSound* self, int unused);
+void stop_play_sound(ObjSound* self, int _OFF);
 
 // -------------- music player controller
 void go_play(Controller* self, int c);
 void set_key(Controller* self, int _key);
 void set_tempo(Controller* self, int _tempo);
 void display_period(Controller* self, int unused);
+void stop_go_play(Controller* self, int _OFF);
 
 
 //  --------------- Background load
@@ -112,19 +120,23 @@ void set_bg_load(Background_load* self, int c);
 void set_ddl_bg(Background_load*, int);
 
 
-App app = { initObject(), 0, 'X', 20, 0, {0}, {0}, 0, 0, init_can_msg(), 3};
-ObjSound sound_0 = {initObject(), {0}, 4, 1, 1000, 1, 900, 0};
-Controller ctrl_obj = {initObject(), {0}, init_freq_index(), init_period(), init_note_length(), 0, 120, 0, 32};
+App app = { initObject(), 0, 'X', 20, 0, {0}, {0}, 0, 0, init_can_msg(), 3, 0};
+ObjSound sound_0 = {initObject(), {0}, 14, 1, 1000, 1, 900, 0, 0};
+Controller ctrl_obj = {initObject(), {0}, init_freq_index(), init_period(), init_note_length(), 0, 120, 0, 32, 0};
 Background_load background_load = {initObject(), {0}, 0, 1300, 0, 1300};
 
 Serial sci0 = initSerial(SCI_PORT0, &app, reader);
 Can can0 = initCan(CAN_PORT0, &app, receiver);     
 
 // app.c-----------------------------------------------------------------------------------------------------------
+void reset_mode(App* self, int c){
+	self->mode = c;
+}
+
 void receiver(App *self, int unused) {
     CAN_RECEIVE(&can0, &self->msg);
-//    SCI_WRITE(&sci0, "\nCan1 msg received: \n");
-//    SCI_WRITE(&sci0, self->msg.buff);
+    SCI_WRITE(&sci0, "\nCan1 msg received: \n");
+    SCI_WRITE(&sci0, self->msg.buff);
 	ASYNC(self,parse_can_msg,0);
 }
 
@@ -149,6 +161,9 @@ void parse_can_msg(App *self, int unused) {
 		SCI_WRITE(&sci0, self->buff);
 		
 		switch(c){
+			case 'c':
+				self->mode = 0; 
+				break;
 			case 'u':
 			case 'd':
 			case 'm':
@@ -166,7 +181,33 @@ void parse_can_msg(App *self, int unused) {
 				// set the key
 				ASYNC(&ctrl_obj, set_tempo, can_input);
 				break;	
+			case 'b':
+				
+	//			if(self->_already_ON){
+	//				break;
+	//			}
+				// only start the call once
+				// reset the controller
+				SYNC(&ctrl_obj, stop_go_play, 1); 
+				// reset the tone generator
+				SYNC(&sound_0, stop_play_sound, 1);
+				// start music controller
+				ASYNC(&ctrl_obj, go_play, 0); 
+				// start the tone generator
+				ASYNC(&sound_0, play_sound, 0);
+							
+	//			self->_already_ON = 1;
+				
 			default :;
+		}
+		// only carry out execution in conductor mode
+		if(c == 'q'){
+			// stop the controller
+			ASYNC(&ctrl_obj, stop_go_play, 0); 
+			// stop the tone generator
+			ASYNC(&sound_0, stop_play_sound, 0);
+			// reset the mode
+//			ASYNC(self, reset_mode, 3);
 		}
 	}
 	
@@ -180,26 +221,34 @@ void reader(App *self, int c) {
 	switch(c){
 		// conductor mode
 		case 'c':
-			if(self->mode == 3){
-				// only start start the call when power on
-				// start music controller
-				ASYNC(&ctrl_obj, go_play, 0); 
-				// start the tone generator
-				ASYNC(&sound_0, play_sound, 0);
-			}
-			self->mode = 0; 
-			SCI_WRITE(&sci0, "\nEnter Conductor mode\n");
+//			if(self->mode == 3){
+//				// only start start the call when power on
+//				// reset the controller
+//				SYNC(&ctrl_obj, stop_go_play, 1); 
+//				// reset the tone generator
+//				SYNC(&sound_0, stop_play_sound, 1);
+//				// start music controller
+//				ASYNC(&ctrl_obj, go_play, 0); 
+//				// start the tone generator
+//				ASYNC(&sound_0, play_sound, 0);
+				self->mode = 0; 
+				SCI_WRITE(&sci0, "\nEnter Conductor mode\n");
+//			}			
 			break;
 			
 		// musician mode	
 		case 'v':		// go_play and play_sound will start in parse_can_msg()
-			if(self->mode == 3){
-				// only start the call once
-				// start music controller
-				ASYNC(&ctrl_obj, go_play, 0); 
-				// start the tone generator
-				ASYNC(&sound_0, play_sound, 0);
-			}
+//			if(self->mode == 3){
+//				// only start the call once
+//				// reset the controller
+//				SYNC(&ctrl_obj, stop_go_play, 1); 
+//				// reset the tone generator
+//				SYNC(&sound_0, stop_play_sound, 1);
+//				// start music controller
+//				ASYNC(&ctrl_obj, go_play, 0); 
+//				// start the tone generator
+//				ASYNC(&sound_0, play_sound, 0);
+//			}
 			// set the musician mode
 			self->mode = 1; 
 			SCI_WRITE(&sci0, "\nEnter musician mode\n");
@@ -225,13 +274,38 @@ void reader(App *self, int c) {
 			}
 			break;
 			
+		// start the player
+		case 'b':
+			// prepare and send CAN msg
+			msg.msgId = 1;
+			msg.nodeId = 1;
+			msg.length = 2;
+			msg.buff[0] = 10;	// unused int only to occupy the position
+			msg.buff[1] = 'b';
+			CAN_SEND(&can0, &msg);
+			
+			if(self->mode == 1){
+				break;
+			} 
+			
+			if(self->_already_ON){
+				break;
+			}
+			// only start the call once
+			// reset the controller
+			SYNC(&ctrl_obj, stop_go_play, 1); 
+			// reset the tone generator
+			SYNC(&sound_0, stop_play_sound, 1);
+			// start music controller
+			ASYNC(&ctrl_obj, go_play, 0); 
+			// start the tone generator
+			ASYNC(&sound_0, play_sound, 0);
+			
+//			self->_already_ON = 1;
+			
 		default:;	
 	}
-
 	ASYNC(self,read_integer,c);	
-
-
-	
 }
 
 /* output integer input form uart */
@@ -313,6 +387,17 @@ void read_integer(App *self, int c) {
 			msg.buff[1] = 's';
 			CAN_SEND(&can0, &msg);
 			break;	
+		
+		// stop the player
+		case 'q':
+			// prepare and send CAN msg
+			msg.msgId = 1;
+			msg.nodeId = 1;
+			msg.length = 2;
+			msg.buff[0] = 10;	// unused int only to occupy the position
+			msg.buff[1] = 'q';
+			CAN_SEND(&can0, &msg);
+			break;
 			
 		case 'k':
 			self->buff[self->i] = '\0';
@@ -405,6 +490,18 @@ void read_integer(App *self, int c) {
 		ASYNC(&sound_0, set_ddl_sound, c);	
 		ASYNC(&sound_0, set_volume, c);
 	}
+	
+	if (self->mode == 0  || self->mode == 3){
+		// only carry out execution in conductor mode
+		if(c == 'q'){
+			// stop the controller
+			ASYNC(&ctrl_obj, stop_go_play, 0); 
+			// stop the tone generator
+			ASYNC(&sound_0, stop_play_sound, 0);
+			// reset the mode
+			ASYNC(self, reset_mode, 3);
+		}
+	}
 }
 
 void startApp(App *self, int arg) {
@@ -436,6 +533,10 @@ int main() {
 
 //  sound generator part soudn.c
 //sound.c -------------------------------------------------------------------------------------------------------
+void stop_play_sound(ObjSound* self, int _OFF){
+	self->_ON = _OFF;
+}
+
 void play_sound(ObjSound* self, int ON){
 	int* p = (int*)0x4000741C;		// device address
 	
@@ -450,12 +551,14 @@ void play_sound(ObjSound* self, int ON){
 	if (ON == 0){
 		*(p) = 0;							// write 0 to the device addr
 	}
-		
-	if (self->ddl_en) {					// enable deadline
-		SEND(USEC(500000 / self->sound_freq), USEC(self->ddl), self, play_sound, (ON + 1) % 2);
-	}
-	else {
-		AFTER(USEC(500000 / self->sound_freq), self, play_sound, (ON + 1) % 2);		// disable deadline
+	
+	if (self->_ON){
+		if (self->ddl_en) {					// enable deadline
+			SEND(USEC(500000 / self->sound_freq), USEC(self->ddl), self, play_sound, (ON + 1) % 2);
+		}
+		else {
+			AFTER(USEC(500000 / self->sound_freq), self, play_sound, (ON + 1) % 2);		// disable deadline
+		}
 	}
 }
 
@@ -504,6 +607,12 @@ void set_freq(ObjSound* self, int _freq){
 }
 
 // --Controller.c --------------------------------------------------------------------------------------------------------------------------------
+void stop_go_play(Controller* self, int _OFF){
+	self->_ON = _OFF;
+	// reset the note index
+	self->index = 0;
+}
+
 void go_play(Controller* self, int unused) {
 	int cur_beat_length = 0;
 	int _silent_time = 0;
@@ -534,8 +643,11 @@ void go_play(Controller* self, int unused) {
 	SEND(MSEC(cur_beat_length - _silent_time), USEC(100), &sound_0, make_silence, 1);
 	// reset the silent flag
 	SEND(MSEC(cur_beat_length-1), USEC(100),&sound_0, make_silence, 0);
-	// call itself to achieve the periodic play
-	SEND(MSEC(cur_beat_length), USEC(100), self, go_play, 0);
+	
+	if(self->_ON){
+		// call itself to achieve the periodic play
+		SEND(MSEC(cur_beat_length), USEC(100), self, go_play, 0);
+	}
 	// loop within the music segments
 	if (self->index < (self->totalTones -1)) { 
 		self->index++; 
