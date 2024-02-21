@@ -31,6 +31,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <math.h>
+#include "sioTinyTimber.h"
 
 #define init_can_msg()	{0,0,0,{0}}
 #define init_freq_index() {0,2,4,0,0,2,4,0,4,5,7,4,5,7,7,9,7,5,4,0,7,9,7,5,4,0,0,-5,0,0,-5,0}
@@ -77,6 +78,9 @@ typedef struct {
 	int index; // current tone to play
 	int totalTones; // number of tones in our music	
 	int _ON;		 // on switch, 1 means on , 0 means off
+	Time press_time[10]; // time of each press
+	int time_index; 
+	int total_time_num;
 } Controller;
 
 typedef struct {
@@ -96,6 +100,7 @@ void read_integer(App*, int);
 void parse_can_msg(App*, int);
 void reset_mode(App*, int);	
 
+
 //-------------- tone generator
 void play_sound(ObjSound*, int);
 void set_volume(ObjSound* self, int c);		
@@ -110,6 +115,7 @@ void set_key(Controller* self, int _key);
 void set_tempo(Controller* self, int _tempo);
 void display_period(Controller* self, int unused);
 void stop_go_play(Controller* self, int _OFF);
+void detector(Controller* self, int c);			//interrupt function of sysio interrupt
 
 
 //  --------------- Background load
@@ -120,11 +126,13 @@ void set_ddl_bg(Background_load*, int);
 
 App app = { initObject(), 0, 'X', 20, 0, {0}, {0}, 0, 0, init_can_msg(), 3};
 ObjSound sound_0 = {initObject(), {0}, 4, 1, 1000, 1, 900, 0, 0};
-Controller ctrl_obj = {initObject(), {0}, init_freq_index(), init_period(), init_note_length(), 0, 120, 0, 32, 0};
+Controller ctrl_obj = {initObject(), {0}, init_freq_index(), init_period(), init_note_length(), 0, 120, 0, 32, 0, {0}, 0, 10};
 Background_load background_load = {initObject(), {0}, 0, 1300, 0, 1300};
 
 Serial sci0 = initSerial(SCI_PORT0, &app, reader);
 Can can0 = initCan(CAN_PORT0, &app, receiver);     
+// instantiation of an SysIO button object, interrupt handler is method detector()
+SysIO button0 = initSysIO(SIO_PORT0, &ctrl_obj, detector);
 
 // app.c-----------------------------------------------------------------------------------------------------------
 void reset_mode(App* self, int c){
@@ -477,6 +485,7 @@ void startApp(App *self, int arg) {
 int main() {
     INSTALL(&sci0, sci_interrupt, SCI_IRQ0);
 	INSTALL(&can0, can_interrupt, CAN_IRQ0);
+	INSTALL(&button0, sci_interrupt, SIO_IRQ0);
     TINYTIMBER(&app, startApp, 0);
     return 0;
 }
@@ -557,6 +566,22 @@ void set_freq(ObjSound* self, int _freq){
 }
 
 // --Controller.c --------------------------------------------------------------------------------------------------------------------------------
+
+void detector(Controller* self, int unused){
+	SCI_WRITE(&sci0, "button pressed/n");
+	Time current_time = CURRENT_OFFSET();
+	if (current_time - self->press_time[self->time_index] > MSC(100)){
+		if (self->time_index < self->total_time_num - 1) {
+			self->time_index++;
+			self->press_time[self->time_index] = current_time;
+			
+			snprintf(self->buff, sizeof(self->buff), "\n add a time %d\n", current_time);
+			SCI_WRITE(&sci0, self->buff);
+		}
+	} 
+	
+}
+
 void stop_go_play(Controller* self, int _OFF){
 	self->_ON = _OFF;
 	// reset the note index
