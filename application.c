@@ -23,6 +23,7 @@
  *  v: enter musician mode start play
  *  p: show current mode
  *  q: to stop play
+ *  b: begin to play
 
  * */
 #include "TinyTimber.h"
@@ -40,6 +41,7 @@
                          //{a, a, a, a, a, a, a, a, a, a, b, a, a, b, c, c, c, c, a, a, c, c, c, c, a, a, a, a, b, a, a, b}
 	
 #define CAN_PORT1   (CAN_TypeDef *)(CAN2)
+
 
 typedef struct {
 	Object super;
@@ -65,6 +67,12 @@ typedef struct {
 	int rdcnt;		/*number of integer can be read*/
 	CANMsg msg;		// CAN msg to send
 	int mode; 		// 0 conductor, 1 musician, 3 default
+	int _already_ON;  // flag for already started the recursive func
+	int tIdx; 		// time array index
+	int total_time_num;
+	Time press_time[4]; // time of each press
+	Time tampo_interval[3]; // the time interval of several presses
+	Timer current_time;
 } App;
 	
 typedef struct {
@@ -96,6 +104,7 @@ void receiver_2(App*, int);
 void read_integer(App*, int);
 void parse_can_msg(App*, int);
 void reset_mode(App*, int);	
+void detector(App* self, int c);	
 
 //-------------- tone generator
 void play_sound(ObjSound*, int);
@@ -111,7 +120,7 @@ void set_key(Controller* self, int _key);
 void set_tempo(Controller* self, int _tempo);
 void display_period(Controller* self, int unused);
 void stop_go_play(Controller* self, int _OFF);
-void detector(Controller* self, int c);			//interrupt function of sysio interrupt
+//void detector(Controller* self, int c);			//interrupt function of sysio interrupt
 
 
 //  --------------- Background load
@@ -120,24 +129,78 @@ void set_bg_load(Background_load* self, int c);
 void set_ddl_bg(Background_load*, int);
 
 
-App app = { initObject(), 0, 'X', 20, 0, {0}, {0}, 0, 0, init_can_msg(), 3};
-ObjSound sound_0 = {initObject(), {0}, 4, 1, 1000, 1, 900, 0, 0};
+App app = { initObject(), 0, 'X', 20, 0, {0}, {0}, 0, 0, init_can_msg(), 3, 0, 0, 4, {0}, {0}};
+ObjSound sound_0 = {initObject(), {0}, 14, 1, 1000, 1, 900, 0, 0};
 Controller ctrl_obj = {initObject(), {0}, init_freq_index(), init_period(), init_note_length(), 0, 120, 0, 32, 0};
 Background_load background_load = {initObject(), {0}, 0, 1300, 0, 1300};
 
 Serial sci0 = initSerial(SCI_PORT0, &app, reader);
 Can can0 = initCan(CAN_PORT0, &app, receiver);     
 // instantiation of an SysIO button object, interrupt handler is method detector()
-SysIO button0 = initSysIO(SIO_PORT0, &ctrl_obj, detector);
+//SysIO button0 = initSysIO(SIO_PORT0, &ctrl_obj, detector);
+SysIO button0 = initSysIO(SIO_PORT0, &app, detector);
+
 
 // app.c-----------------------------------------------------------------------------------------------------------
+void detector(App* self, int unused){
+	Time temp_time = T_SAMPLE(&self->current_time);
+	Time time_difference = 0, temp1=0, temp2=0, temp3=0;
+	int tempo_v;
+	
+	if(self->tIdx == 0){
+		time_difference = (temp_time)/100;		//ms
+	}
+	else{
+		time_difference = (temp_time-self->press_time[self->tIdx])/100;		//ms
+	}
+	
+	snprintf(self->buff, sizeof(self->buff), "\nUSEC(1) time: %ld\n",USEC(1));
+		SCI_WRITE(&sci0, self->buff); 
+	
+	// only count as one press if the interval between two interrupts are larger than 100ms
+	if (time_difference*100> MSEC(100)){
+		// if the interval between two press is longer than 3000 ms, restart the count
+		if(time_difference > 30000){
+				self->tIdx = 0;
+		}
+		
+		snprintf(self->buff, sizeof(self->buff), "\nPress No. = %d at time: %ld, difference = %ld\n", self->tIdx,temp_time, time_difference);
+		SCI_WRITE(&sci0, self->buff); 
+		// circulate the index of the time array which stores the time of each press
+		if (self->tIdx < (self->total_time_num - 1)) {
+			// record the time of valid press
+			self->press_time[self->tIdx] = temp_time;
+			self->tIdx++;
+		}
+		else{
+			self->tIdx = 0;
+		}
+		
+		// only check the tempo at the fourth press
+			if(self->tIdx == self->total_time_num-1 ) {
+				temp1= abs(self->press_time[1] - self->press_time[0]);	// interval 1
+				temp2= abs(self->press_time[2] - self->press_time[1]);	// interval 2
+				temp3= abs(self->press_time[3] - self->press_time[2]);	// interval 3
+				snprintf(self->buff, sizeof(self->buff), "\nitl1 = %ldms, intl2= %ldms, intl3= %ldms\n",temp1/100,temp2/100, temp3/100);
+				SCI_WRITE(&sci0, self->buff); 
+				//difference no more than 100ms
+				if(abs(temp1-temp2) <= 10000 && abs(temp1-temp3) <= 10000 && abs(temp3-temp2) <= 10000)	{
+					tempo_v = 4*60000000/(temp1+temp2+temp3);
+					ASYNC(&ctrl_obj, set_tempo, tempo_v);
+				}
+			}
+	} 
+	
+}
+
 void reset_mode(App* self, int c){
 	self->mode = c;
 }
 
 void receiver(App *self, int unused) {
     CAN_RECEIVE(&can0, &self->msg);
-//    SCI_WRITE(&sci0, "\nCan1 msg received: \n");
+    SCI_WRITE(&sci0, "\nCan1 msg received: \n");
+	snprintf(self->buff, sizeof(self->buff), "\r %d,  %c\n", self->msg.buff[0], self->msg.buff[1]);
 //    SCI_WRITE(&sci0, self->msg.buff);
 	ASYNC(self,parse_can_msg,0);
 }
@@ -183,6 +246,22 @@ void parse_can_msg(App *self, int unused) {
 				// set the key
 				ASYNC(&ctrl_obj, set_tempo, can_input);
 				break;	
+			case 'b':
+				
+	//			if(self->_already_ON){
+	//				break;
+	//			}
+				// only start the call once
+				// reset the controller
+				SYNC(&ctrl_obj, stop_go_play, 1); 
+				// reset the tone generator
+				SYNC(&sound_0, stop_play_sound, 1);
+				// start music controller
+				ASYNC(&ctrl_obj, go_play, 0); 
+				// start the tone generator
+				ASYNC(&sound_0, play_sound, 0);
+							
+	//			self->_already_ON = 1;
 				
 			default :;
 		}
@@ -192,8 +271,6 @@ void parse_can_msg(App *self, int unused) {
 			ASYNC(&ctrl_obj, stop_go_play, 0); 
 			// stop the tone generator
 			ASYNC(&sound_0, stop_play_sound, 0);
-			// reset the mode
-			ASYNC(self, reset_mode, 3);
 		}
 	}
 	
@@ -207,34 +284,12 @@ void reader(App *self, int c) {
 	switch(c){
 		// conductor mode
 		case 'c':
-			if(self->mode == 3){
-				// only start start the call when power on
-				// reset the controller
-				SYNC(&ctrl_obj, stop_go_play, 1); 
-				// reset the tone generator
-				SYNC(&sound_0, stop_play_sound, 1);
-				// start music controller
-				ASYNC(&ctrl_obj, go_play, 0); 
-				// start the tone generator
-				ASYNC(&sound_0, play_sound, 0);
 				self->mode = 0; 
-				SCI_WRITE(&sci0, "\nEnter Conductor mode\n");
-			}			
+				SCI_WRITE(&sci0, "\nEnter Conductor mode\n");			
 			break;
 			
 		// musician mode	
 		case 'v':		// go_play and play_sound will start in parse_can_msg()
-			if(self->mode == 3){
-				// only start the call once
-				// reset the controller
-				SYNC(&ctrl_obj, stop_go_play, 1); 
-				// reset the tone generator
-				SYNC(&sound_0, stop_play_sound, 1);
-				// start music controller
-				ASYNC(&ctrl_obj, go_play, 0); 
-				// start the tone generator
-				ASYNC(&sound_0, play_sound, 0);
-			}
 			// set the musician mode
 			self->mode = 1; 
 			SCI_WRITE(&sci0, "\nEnter musician mode\n");
@@ -259,6 +314,35 @@ void reader(App *self, int c) {
 				SCI_WRITE(&sci0, "\nIn Idle mode\n");
 			}
 			break;
+			
+		// start the player
+		case 'b':
+			// prepare and send CAN msg
+			msg.msgId = 1;
+			msg.nodeId = 1;
+			msg.length = 2;
+			msg.buff[0] = 10;	// unused int only to occupy the position
+			msg.buff[1] = 'b';
+			CAN_SEND(&can0, &msg);
+			
+			if(self->mode == 1){
+				break;
+			} 
+			
+//			if(self->_already_ON){
+//				break;
+//			}
+			// only start the call once
+			// reset the controller
+			SYNC(&ctrl_obj, stop_go_play, 1); 
+			// reset the tone generator
+			SYNC(&sound_0, stop_play_sound, 1);
+			// start music controller
+			ASYNC(&ctrl_obj, go_play, 0); 
+			// start the tone generator
+			ASYNC(&sound_0, play_sound, 0);
+			
+//			self->_already_ON = 1;
 			
 		default:;	
 	}
@@ -446,6 +530,9 @@ void read_integer(App *self, int c) {
 	if (self->mode == 0){
 		ASYNC(&sound_0, set_ddl_sound, c);	
 		ASYNC(&sound_0, set_volume, c);
+	}
+	
+	if (self->mode == 0  || self->mode == 3){
 		// only carry out execution in conductor mode
 		if(c == 'q'){
 			// stop the controller
@@ -463,6 +550,8 @@ void startApp(App *self, int arg) {
 
     CAN_INIT(&can0);
     SCI_INIT(&sci0);
+	// initialize the button obj
+	SIO_INIT(&button0);
     SCI_WRITE(&sci0, "Hello, hello...\n");
 
     msg.msgId = 1;
@@ -481,6 +570,8 @@ void startApp(App *self, int arg) {
 int main() {
     INSTALL(&sci0, sci_interrupt, SCI_IRQ0);
 	INSTALL(&can0, can_interrupt, CAN_IRQ0);
+	// install the interrupt for the button
+	INSTALL(&button0, sio_interrupt, SIO_IRQ0);
     TINYTIMBER(&app, startApp, 0);
     return 0;
 }
@@ -562,9 +653,10 @@ void set_freq(ObjSound* self, int _freq){
 
 // --Controller.c --------------------------------------------------------------------------------------------------------------------------------
 
-void detector(Controller* self, int c){
-	
-}
+// periodic recursive function to check if the button is hold 
+//void check_hold_mode(Controller* self, int unused){
+//	
+//}
 
 void stop_go_play(Controller* self, int _OFF){
 	self->_ON = _OFF;
