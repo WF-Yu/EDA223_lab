@@ -146,6 +146,8 @@ void stop_go_play(Controller* self, int _OFF);
 void bg_loops(Background_load*, int);
 void set_bg_load(Background_load* self, int c);
 void set_ddl_bg(Background_load*, int);
+void turn_on_led(Background_load*, int);
+void turn_off_led(Background_load*, int);
 
 App app = { initObject(), 0, 'X', 20, 0, { 0 }, { 0 }, 0, 0, init_can_msg(), 3, 0, 0,  4, 0, 0, 0, 0, {0}, {0}, {0}};
 ObjSound sound_0 = { initObject(), { 0 }, 14, 1, 1000, 1, 900, 0, 0 };
@@ -771,6 +773,10 @@ void go_play(Controller* self, int unused)
     if(self->_ON) {
 	// call itself to achieve the periodic play
 	SEND(MSEC(cur_beat_length), USEC(100), self, go_play, 0);
+	// turn on led
+	SEND(MSEC(cur_beat_length), USEC(100), &background_load, turn_on_led, 0);
+	// turn off led
+	SEND(MSEC(cur_beat_length/2), USEC(100), &background_load, turn_off_led, 0);
     }
     // loop within the music segments
     if(self->index < (self->totalTones - 1)) {
@@ -827,6 +833,13 @@ void set_tempo(Controller* self, int _tempo)
 }
 
 // background load .c-----------------------------------------------------------------
+void turn_on_led(Background_load* self, int unused){
+	SIO_WRITE(&button0, 0);
+}
+void turn_off_led(Background_load* self, int unused){
+	SIO_WRITE(&button0, 1);
+}
+
 void bg_loops(Background_load* self, int unused)
 {
     int cnt = self->background_loop_range;
