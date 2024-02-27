@@ -160,8 +160,8 @@ SysIO button0 = initSysIO(SIO_PORT0, &app, detector);
 
 // app.c-----------------------------------------------------------------------------------------------------------
 void check_long_press(App* self, int unused){
-
-	if(SIO_READ(&button0)==0){
+	
+	if(SIO_READ(&button0)==0){			// button pressed
 		// check for the button every 50ms
 		AFTER(MSEC(50),self, check_long_press, 0);
 		// if it is hold for one second
@@ -172,7 +172,7 @@ void check_long_press(App* self, int unused){
 			SCI_WRITE(&sci0, self->buff);
 		}
 		if (self->long_press_cnt == 41){
-			snprintf(self->buff, sizeof(self->buff), "\nLong-press for 2 Seconds, Reset the tempo to 120 bpm!\n");
+			snprintf(self->buff, sizeof(self->buff), "\nLong-press for 2 seconds, Reset the tempo to 120 bpm!\n");
 			SCI_WRITE(&sci0, self->buff);
 			// reset the tempo to 120bpm
 			ASYNC(&ctrl_obj, set_tempo, 120);
@@ -180,16 +180,15 @@ void check_long_press(App* self, int unused){
 		
 		self->long_press_cnt++;
 	}
-	else{
+	else{		// button released
 		self->long_press_cnt = 0;
 		if(self->long_press_mode == 1)
 		{
 			self->long_press_mode = 0;
 			self->leave_LPM = T_SAMPLE(&self->current_time);
-			self->long_press_mode = 1;
-			snprintf(self->buff, sizeof(self->buff), "\nLeave Long-press Mode at time %ldms!\n", self->leave_LPM/100);
+			snprintf(self->buff, sizeof(self->buff), "\nLeave Long-press mode at time %ldms!\n", self->leave_LPM/100);
 			SCI_WRITE(&sci0, self->buff);
-			snprintf(self->buff, sizeof(self->buff), "\nLong pressed for %ldms!\n", (self->leave_LPM-self->enter_LPM)/100);
+			snprintf(self->buff, sizeof(self->buff), "\nLong interval is %ld Seconds!\n", (self->leave_LPM-self->enter_LPM)/100000 + 1);
 			SCI_WRITE(&sci0, self->buff);
 			self->enter_LPM = 0;
 			self->leave_LPM = 0;
@@ -215,44 +214,49 @@ void detector(App* self, int unused)
     // only count as one press if the interval between two interrupts are larger than 100ms
     if(time_difference * 100 > MSEC(100)) {
 		
-	// if the interval between two press is longer than 3000 ms, restart the count
-	if(time_difference > 3000 && self->tIdx != 0) {
-	    self->tIdx = 0;
-	    snprintf(self->buff, sizeof(self->buff), "\nPress No.%d, take too long! Restart the tempo count!\n",self->tIdx);
-	    SCI_WRITE(&sci0, self->buff);
-	}
+		// if the interval between two press is longer than 3000 ms, restart the count
+		if(time_difference > 3000 && self->tIdx != 0) {
+			self->tIdx = 0;
+			SCI_WRITE(&sci0, "\nPaused for too long! Restart the tempo count!\n");
+		}
 
-	snprintf(self->buff, sizeof(self->buff), "\nPress No.%d at time: %ldms\n", self->tIdx,
-	    temp_time / 100);
-	SCI_WRITE(&sci0, self->buff);
-	// circulate the index of the time array which stores the time of each press
-	if(self->tIdx < self->total_time_num ) {
-	    // record the time of valid press
-	    self->press_time[self->tIdx] = temp_time;
-	    self->tIdx++;
-		// only check the tempo at the fourth press
-		if(self->tIdx == self->total_time_num  ){
-			temp1 = abs(self->press_time[1] - self->press_time[0]); // interval 1
-		    temp2 = abs(self->press_time[2] - self->press_time[1]); // interval 2
-		    temp3 = abs(self->press_time[3] - self->press_time[2]); // interval 3
-		    snprintf(self->buff, sizeof(self->buff),
-		        "\nP1=%ldms, P2=%ldms, P3=%ldms, P4=%ldms\n", self->press_time[0] / 100,
-		        self->press_time[1] / 100, self->press_time[2] / 100, self->press_time[3] / 100);
-		    SCI_WRITE(&sci0, self->buff);
-		    snprintf(self->buff, sizeof(self->buff), "\nitl1 = %ldms, intl2= %ldms, intl3= %ldms\n",
-		        temp1 / 100, temp2 / 100, temp3 / 100);
-		    SCI_WRITE(&sci0, self->buff);
-		    // difference no more than 100ms
-		    if(abs(temp1 - temp2) <= 10000 && abs(temp1 - temp3) <= 10000 && abs(temp3 - temp2) <= 10000) {
-		        tempo_v = 4 * 6000000 / (temp1 + temp2 + temp3);
-		        snprintf(self->buff, sizeof(self->buff), "\nNew Tempo is %d\n", tempo_v);
-		        SCI_WRITE(&sci0, self->buff);
-		        ASYNC(&ctrl_obj, set_tempo, tempo_v);
-		    }
-	      		}
-	} else {
-	    self->tIdx = 0;
-	}
+		snprintf(self->buff, sizeof(self->buff), "\nPress No.%d at time: %ldms\n", (self->tIdx+1)%5, temp_time / 100);
+		SCI_WRITE(&sci0, self->buff);
+	
+		if(self->tIdx != 0 && self->tIdx < 4){
+			snprintf(self->buff, sizeof(self->buff), "\nInterval Between Press %d and %d is %ldms\n", self->tIdx+1, self->tIdx, 
+			(temp_time-self->press_time[self->tIdx-1]) / 100);
+			SCI_WRITE(&sci0, self->buff);
+		}else{
+			SCI_WRITE(&sci0, "\nFirst press for new sequence of tempo tap!\n");
+		}
+	
+		// circulate the index of the time array which stores the time of each press
+		if(self->tIdx < self->total_time_num ) {
+			// record the time of valid press
+			self->press_time[self->tIdx] = temp_time;
+			self->tIdx++;
+			// only check the tempo at the fourth press
+			if(self->tIdx == self->total_time_num  ){
+				temp1 = abs(self->press_time[1] - self->press_time[0]); // interval 1
+				temp2 = abs(self->press_time[2] - self->press_time[1]); // interval 2
+				temp3 = abs(self->press_time[3] - self->press_time[2]); // interval 3
+				snprintf(self->buff, sizeof(self->buff), "\ninterval_1=%ldms, interval_2=%ldms, interval_3=%ldms\n",
+					temp1 / 100, temp2 / 100, temp3 / 100);
+				SCI_WRITE(&sci0, self->buff);
+				// difference no more than 100ms
+				if(abs(temp1 - temp2) <= 10000 && abs(temp1 - temp3) <= 10000 && abs(temp3 - temp2) <= 10000) {
+					tempo_v = 4 * 6000000 / (temp1 + temp2 + temp3);
+					snprintf(self->buff, sizeof(self->buff), "\nTap Tempo value is %d\n", tempo_v);
+					SCI_WRITE(&sci0, self->buff);
+					ASYNC(&ctrl_obj, set_tempo, tempo_v);
+				}else {
+					SCI_WRITE(&sci0, "\nThe difference between intervals are larger than 100ms! No tempo changed!\n");
+				}
+			}
+		} else {
+			self->tIdx = 0;
+		}
     }
 }
 
