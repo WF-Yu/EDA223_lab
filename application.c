@@ -24,6 +24,8 @@
  *  p: show current mode
  *  q: to stop play
  *  b: begin to play
+ *  tap button four times to set tempo
+ *  long press button for 2 seconds to reset tempo to 120 bpm
 
  * */
 #include "TinyTimber.h"
@@ -109,10 +111,6 @@ typedef struct {
 
 typedef struct {
     Object super;
-    char buff[64];
-    int background_loop_range;
-    int interval;
-    int ddl_en; // deadline_enable
     int ddl;
 } Background_load;
 
@@ -140,24 +138,19 @@ void set_key(Controller* self, int _key);
 void set_tempo(Controller* self, int _tempo);
 void display_period(Controller* self, int unused);
 void stop_go_play(Controller* self, int _OFF);
-// void detector(Controller* self, int c);			//interrupt function of sysio interrupt
 
 //  --------------- Background load
-void bg_loops(Background_load*, int);
-void set_bg_load(Background_load* self, int c);
-void set_ddl_bg(Background_load*, int);
 void turn_on_led(Background_load*, int);
 void turn_off_led(Background_load*, int);
 
 App app = { initObject(), 0, 'X', 20, 0, { 0 }, { 0 }, 0, 0, init_can_msg(), 3, 0, 0,  4, 0, 0, 0, 0, {0}, {0}, {0}};
 ObjSound sound_0 = { initObject(), { 0 }, 14, 1, 1000, 1, 900, 0, 0 };
 Controller ctrl_obj = { initObject(), { 0 }, init_freq_index(), init_period(), init_note_length(), 0, 120, 0, 32, 0 };
-Background_load background_load = { initObject(), { 0 }, 0, 1300, 0, 1300 };
+Background_load background_load = { initObject(),  0 };
 
 Serial sci0 = initSerial(SCI_PORT0, &app, reader);
 Can can0 = initCan(CAN_PORT0, &app, receiver);
 // instantiation of an SysIO button object, interrupt handler is method detector()
-// SysIO button0 = initSysIO(SIO_PORT0, &ctrl_obj, detector);
 SysIO button0 = initSysIO(SIO_PORT0, &app, detector);
 
 // app.c-----------------------------------------------------------------------------------------------------------
@@ -726,11 +719,6 @@ void set_freq(ObjSound* self, int _freq)
 // --Controller.c
 // --------------------------------------------------------------------------------------------------------------------------------
 
-// periodic recursive function to check if the button is hold
-// void check_hold_mode(Controller* self, int unused){
-//
-//}
-
 void stop_go_play(Controller* self, int _OFF)
 {
     self->_ON = _OFF;
@@ -753,7 +741,7 @@ void go_play(Controller* self, int unused)
     // calculate the beat length
     cur_beat_length = self->note_len[self->index] * 30000 / self->tempo;
     // dynamic slience time
-    if(self->tempo >= 60 && self->tempo < 100) {
+    if(self->tempo >= 30 && self->tempo < 100) {
 	_silent_time = 100;
     }
     if(self->tempo >= 100 && self->tempo < 140) {
@@ -762,7 +750,7 @@ void go_play(Controller* self, int unused)
     if(self->tempo >= 140 && self->tempo < 180) {
 	_silent_time = 60;
     }
-    if(self->tempo >= 180 && self->tempo <= 240) {
+    if(self->tempo >= 180 && self->tempo <= 300) {
 	_silent_time = 50;
     }
     // leave 60 ms for silence
@@ -838,44 +826,4 @@ void turn_on_led(Background_load* self, int unused){
 }
 void turn_off_led(Background_load* self, int unused){
 	SIO_WRITE(&button0, 1);
-}
-
-void bg_loops(Background_load* self, int unused)
-{
-    int cnt = self->background_loop_range;
-    while(cnt--)
-	;
-    if(self->ddl_en) {
-	SEND(USEC(self->interval), USEC(self->ddl), self, bg_loops, 0);
-    } else {
-	AFTER(USEC(self->interval), self, bg_loops, 0);
-    }
-}
-void set_bg_load(Background_load* self, int c)
-{
-    switch(c) {
-    case 'h':
-	//			if (self->background_loop_range < 8000) {
-	self->background_loop_range += 500;
-	//			}
-	snprintf(self->buff, sizeof(self->buff), "\nBackground load is: %d\n", self->background_loop_range);
-	SCI_WRITE(&sci0, self->buff);
-	break;
-
-    case 'l':
-	if(self->background_loop_range > 0) {
-	    self->background_loop_range -= 500;
-	}
-	snprintf(self->buff, sizeof(self->buff), "\nBackground load is: %d\n", self->background_loop_range);
-	SCI_WRITE(&sci0, self->buff);
-	break;
-    }
-}
-void set_ddl_bg(Background_load* self, int c)
-{
-    if(c == 's') {
-	self->ddl_en = self->ddl_en == 0 ? 1 : 0;
-	snprintf(self->buff, sizeof(self->buff), "\nBackground load deadline enable: %d\n", self->ddl_en);
-	SCI_WRITE(&sci0, self->buff);
-    }
 }
