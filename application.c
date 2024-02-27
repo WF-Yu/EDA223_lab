@@ -85,6 +85,10 @@ typedef struct {
     int _already_ON; // flag for already started the recursive func
     int tIdx;        // time array index
     int total_time_num;
+	int long_press_cnt;
+	int long_press_mode;	// 1 means in long_press_mode,
+	Time enter_LPM;		// time enter long press mode
+	Time leave_LPM;		// time leave long press mode
     Time press_time[4];     // time of each press
     Time tampo_interval[3]; // the time interval of several presses
     Timer current_time;
@@ -120,6 +124,7 @@ void read_integer(App*, int);
 void parse_can_msg(App*, int);
 void reset_mode(App*, int);
 void detector(App* self, int c);
+void check_long_press(App* self, int unused);
 
 //-------------- tone generator
 void play_sound(ObjSound*, int);
@@ -142,7 +147,7 @@ void bg_loops(Background_load*, int);
 void set_bg_load(Background_load* self, int c);
 void set_ddl_bg(Background_load*, int);
 
-App app = { initObject(), 0, 'X', 20, 0, { 0 }, { 0 }, 0, 0, init_can_msg(), 3, 0, 0, 4, { 0 }, { 0 } };
+App app = { initObject(), 0, 'X', 20, 0, { 0 }, { 0 }, 0, 0, init_can_msg(), 3, 0, 0,  4, 0, 0, 0, 0, {0}, {0}, {0}};
 ObjSound sound_0 = { initObject(), { 0 }, 14, 1, 1000, 1, 900, 0, 0 };
 Controller ctrl_obj = { initObject(), { 0 }, init_freq_index(), init_period(), init_note_length(), 0, 120, 0, 32, 0 };
 Background_load background_load = { initObject(), { 0 }, 0, 1300, 0, 1300 };
@@ -154,12 +159,52 @@ Can can0 = initCan(CAN_PORT0, &app, receiver);
 SysIO button0 = initSysIO(SIO_PORT0, &app, detector);
 
 // app.c-----------------------------------------------------------------------------------------------------------
+void check_long_press(App* self, int unused){
+
+	if(SIO_READ(&button0)==0){
+		// check for the button every 50ms
+		AFTER(MSEC(50),self, check_long_press, 0);
+		// if it is hold for one second
+		if (self->long_press_cnt == 21){
+			self->enter_LPM = T_SAMPLE(&self->current_time);
+			self->long_press_mode = 1;
+			snprintf(self->buff, sizeof(self->buff), "\nEnter Long-press Mode at time %ldms!\n", self->enter_LPM/100);
+			SCI_WRITE(&sci0, self->buff);
+		}
+		if (self->long_press_cnt == 41){
+			snprintf(self->buff, sizeof(self->buff), "\nLong-press for 2 Seconds, Reset the tempo to 120 bpm!\n");
+			SCI_WRITE(&sci0, self->buff);
+			// reset the tempo to 120bpm
+			ASYNC(&ctrl_obj, set_tempo, 120);
+		}
+		
+		self->long_press_cnt++;
+	}
+	else{
+		self->long_press_cnt = 0;
+		if(self->long_press_mode == 1)
+		{
+			self->long_press_mode = 0;
+			self->leave_LPM = T_SAMPLE(&self->current_time);
+			self->long_press_mode = 1;
+			snprintf(self->buff, sizeof(self->buff), "\nLeave Long-press Mode at time %ldms!\n", self->leave_LPM/100);
+			SCI_WRITE(&sci0, self->buff);
+			snprintf(self->buff, sizeof(self->buff), "\nLong pressed for %ldms!\n", (self->leave_LPM-self->enter_LPM)/100);
+			SCI_WRITE(&sci0, self->buff);
+			self->enter_LPM = 0;
+			self->leave_LPM = 0;
+		}
+	}
+}
+
 void detector(App* self, int unused)
 {
     Time temp_time = T_SAMPLE(&self->current_time);
     Time time_difference = 0, temp1 = 0, temp2 = 0, temp3 = 0;
     int tempo_v;
-
+	
+	ASYNC(self, check_long_press,0);
+	
     if(self->tIdx == 0) {
 	time_difference = (temp_time) / 100; // ms
     } else {
