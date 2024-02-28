@@ -247,7 +247,7 @@ void detector(App* self, int unused)
 //	snprintf(self->buff, sizeof(self->buff), "\n tap_cnt = %d!\n", self->tap_cnt);
 //	SCI_WRITE(&sci0, self->buff);
 	if(self->release_flag){
-		self->tap_cnt;
+	
 		temp_c = self->tap_cnt + 1; 
 		SEND(0, USEC(100), self, check_long_press,temp_c);
 		SIO_TRIG(&button0, 0);  // change to press trigger
