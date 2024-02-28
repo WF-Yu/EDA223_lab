@@ -86,6 +86,8 @@ typedef struct {
     int mode;        // 0 conductor, 1 musician, 3 default
     int _already_ON; // flag for already started the recursive func
     int tIdx;        // time array index
+	int tap_cnt;  	//  to check for long press
+	int release_flag;  // 0 press trigger, 1 release trigger
     int total_time_num;
 	int long_press_cnt;
 	int long_press_mode;	// 1 means in long_press_mode,
@@ -112,6 +114,7 @@ typedef struct {
 typedef struct {
     Object super;
     int ddl;
+	int _toggle;
 } Background_load;
 
 //------------------App methods
@@ -143,10 +146,10 @@ void stop_go_play(Controller* self, int _OFF);
 void turn_on_led(Background_load*, int);
 void turn_off_led(Background_load*, int);
 
-App app = { initObject(), 0, 'X', 20, 0, { 0 }, { 0 }, 0, 0, init_can_msg(), 3, 0, 0,  4, 0, 0, 0, 0, {0}, {0}, {0}};
+App app = { initObject(), 0, 'X', 20, 0, { 0 }, { 0 }, 0, 0, init_can_msg(), 3, 0, 0, 0, 0,  4, 0, 0, 0, 0, {0}, {0}, {0}};
 ObjSound sound_0 = { initObject(), { 0 }, 14, 1, 1000, 1, 900, 0, 0 };
 Controller ctrl_obj = { initObject(), { 0 }, init_freq_index(), init_period(), init_note_length(), 0, 120, 0, 32, 0 };
-Background_load background_load = { initObject(),  0 };
+Background_load background_load = { initObject(),  0 , 1};
 
 Serial sci0 = initSerial(SCI_PORT0, &app, reader);
 Can can0 = initCan(CAN_PORT0, &app, receiver);
@@ -154,30 +157,32 @@ Can can0 = initCan(CAN_PORT0, &app, receiver);
 SysIO button0 = initSysIO(SIO_PORT0, &app, detector);
 
 // app.c-----------------------------------------------------------------------------------------------------------
-void check_long_press(App* self, int unused){
+void check_long_press(App* self, int pre_cnt){
 	
-	if(SIO_READ(&button0)==0){			// button pressed
-		// check for the button every 50ms
-		AFTER(MSEC(50),self, check_long_press, 0);
-		// if it is hold for one second
-		if (self->long_press_cnt == 21){
-			self->enter_LPM = T_SAMPLE(&self->current_time);
-			self->long_press_mode = 1;
-			snprintf(self->buff, sizeof(self->buff), "\nEnter Long-press Mode at time %ldms!\n", self->enter_LPM/100);
-			SCI_WRITE(&sci0, self->buff);
-		}
-		if (self->long_press_cnt == 41){
+	int temp = pre_cnt;
+//	snprintf(self->buff, sizeof(self->buff), "\nEnter check long, tap_cnt = %d!\n", self->tap_cnt);
+//	SCI_WRITE(&sci0, self->buff);
+	if (SIO_READ(&button0) ==0){
+	
+	if(self->tap_cnt == temp ){
+		if(self->long_press_mode == 1){   // 2 seconds reset the tempo
 			snprintf(self->buff, sizeof(self->buff), "\nLong-press for 2 seconds, Reset the tempo to 120 bpm!\n");
 			SCI_WRITE(&sci0, self->buff);
 			// reset the tempo to 120bpm
 			ASYNC(&ctrl_obj, set_tempo, 120);
-		}
-		
-		self->long_press_cnt++;
-	}
-	else{		// button released
-		self->long_press_cnt = 0;
-		if(self->long_press_mode == 1)
+		}else{ // 1 sec
+			self->enter_LPM = T_SAMPLE(&self->current_time);
+			self->long_press_mode = 1;
+			snprintf(self->buff, sizeof(self->buff), "\nEnter Long-press Mode at time %ldms!\n", self->enter_LPM/100);
+			SCI_WRITE(&sci0, self->buff);
+			SEND(MSEC(1000), USEC(100), self, check_long_press,temp);
+			SIO_TRIG(&button0, 1);  // change to release trigger
+			self->release_flag = 1;
+		}	
+	}	
+	}else{		
+		self->long_press_cnt = 0; 
+		if(self->long_press_mode == 1)  // leave long press
 		{
 			self->long_press_mode = 0;
 			self->leave_LPM = T_SAMPLE(&self->current_time);
@@ -187,8 +192,49 @@ void check_long_press(App* self, int unused){
 			SCI_WRITE(&sci0, self->buff);
 			self->enter_LPM = 0;
 			self->leave_LPM = 0;
+			self->tap_cnt = 0;
+			SIO_TRIG(&button0, 0);  // change to press trigger
+			
 		}
 	}
+	
+	
+	
+//	if(SIO_READ(&button0)==0){			// button pressed
+//		// check for the button every 50ms
+//		AFTER(MSEC(50),self, check_long_press, 0);
+//		// if it is hold for one second
+//		if (self->long_press_cnt == 21){
+//			self->enter_LPM = T_SAMPLE(&self->current_time);
+//			self->long_press_mode = 1;
+//			snprintf(self->buff, sizeof(self->buff), "\nEnter Long-press Mode at time %ldms!\n", self->enter_LPM/100);
+//			SCI_WRITE(&sci0, self->buff);
+//		}
+//		if (self->long_press_cnt == 41){
+//			snprintf(self->buff, sizeof(self->buff), "\nLong-press for 2 seconds, Reset the tempo to 120 bpm!\n");
+//			SCI_WRITE(&sci0, self->buff);
+//			// reset the tempo to 120bpm
+//			ASYNC(&ctrl_obj, set_tempo, 120);
+//		}
+//		
+//		self->long_press_cnt++;
+//	}
+//	else{		// button released
+//		self->long_press_cnt = 0;
+//		if(self->long_press_mode == 1)
+//		{
+//			self->long_press_mode = 0;
+//			self->leave_LPM = T_SAMPLE(&self->current_time);
+//			snprintf(self->buff, sizeof(self->buff), "\nLeave Long-press mode at time %ldms!\n", self->leave_LPM/100);
+//			SCI_WRITE(&sci0, self->buff);
+//			snprintf(self->buff, sizeof(self->buff), "\nLong interval is %ld Seconds!\n", (self->leave_LPM-self->enter_LPM)/100000 + 1);
+//			SCI_WRITE(&sci0, self->buff);
+//			self->enter_LPM = 0;
+//			self->leave_LPM = 0;
+//		}
+//	}
+
+
 }
 
 void detector(App* self, int unused)
@@ -196,63 +242,82 @@ void detector(App* self, int unused)
     Time temp_time = T_SAMPLE(&self->current_time);
     Time time_difference = 0, temp1 = 0, temp2 = 0, temp3 = 0;
     int tempo_v;
+	int temp_c=0, temp_d =0;
 	
-	ASYNC(self, check_long_press,0);
-	
-    if(self->tIdx == 0) {
-	time_difference = (temp_time) / 100; // ms
-    } else {
-	// compare current pressing time with the previous one
-	time_difference = (temp_time - self->press_time[self->tIdx-1]) / 100; // ms
-    }
-
-    // only count as one press if the interval between two interrupts are larger than 100ms
-    if(time_difference * 100 > MSEC(100)) {
+//	snprintf(self->buff, sizeof(self->buff), "\n tap_cnt = %d!\n", self->tap_cnt);
+//	SCI_WRITE(&sci0, self->buff);
+	if(self->release_flag){
+		self->tap_cnt++;
+		temp_c = self->tap_cnt; 
+		SEND(0, USEC(100), self, check_long_press,temp_c);
+		SIO_TRIG(&button0, 0);  // change to press trigger
+		self->release_flag =0 ;
 		
-		// if the interval between two press is longer than 3000 ms, restart the count
-		if(time_difference > 3000 && self->tIdx != 0) {
-			self->tIdx = 0;
-			SCI_WRITE(&sci0, "\nPaused for too long! Restart the tempo count!\n");
+	
+	}else {
+		
+		temp_d = self->tap_cnt;
+		
+		if(self->tIdx == 0) {
+		time_difference = (temp_time) / 100; // ms
+		SEND(MSEC(1000), USEC(100), self, check_long_press,temp_d);
+		} else {
+		// compare current pressing time with the previous one
+		time_difference = (temp_time - self->press_time[self->tIdx-1]) / 100; // ms
+		SEND(MSEC(1000), USEC(100), self, check_long_press,temp_d+1);
 		}
 
-		snprintf(self->buff, sizeof(self->buff), "\nPress No.%d at time: %ldms\n", (self->tIdx+1)%5, temp_time / 100);
-		SCI_WRITE(&sci0, self->buff);
-	
-		if(self->tIdx != 0 && self->tIdx < 4){
-			snprintf(self->buff, sizeof(self->buff), "\nInterval Between Press %d and %d is %ldms\n", self->tIdx+1, self->tIdx, 
-			(temp_time-self->press_time[self->tIdx-1]) / 100);
-			SCI_WRITE(&sci0, self->buff);
-		}else{
-			SCI_WRITE(&sci0, "\nFirst press for new sequence of tempo tap!\n");
-		}
-	
-		// circulate the index of the time array which stores the time of each press
-		if(self->tIdx < self->total_time_num ) {
-			// record the time of valid press
-			self->press_time[self->tIdx] = temp_time;
-			self->tIdx++;
-			// only check the tempo at the fourth press
-			if(self->tIdx == self->total_time_num  ){
-				temp1 = abs(self->press_time[1] - self->press_time[0]); // interval 1
-				temp2 = abs(self->press_time[2] - self->press_time[1]); // interval 2
-				temp3 = abs(self->press_time[3] - self->press_time[2]); // interval 3
-				snprintf(self->buff, sizeof(self->buff), "\ninterval_1=%ldms, interval_2=%ldms, interval_3=%ldms\n",
-					temp1 / 100, temp2 / 100, temp3 / 100);
+		// only count as one press if the interval between two interrupts are larger than 100ms
+		if(time_difference * 100 > MSEC(100)) {
+			
+//			// if the interval between two press is longer than 3000 ms, restart the count
+//			if(time_difference > 3000 && self->tIdx != 0) {
+//				self->tIdx = 0;
+////				SCI_WRITE(&sci0, "\nPaused for too long! Restart the tempo count!\n");
+//			}
+
+	//		snprintf(self->buff, sizeof(self->buff), "\nPress No.%d at time: %ldms\n", (self->tIdx+1, temp_time / 100);
+	//		SCI_WRITE(&sci0, self->buff);
+		
+			if(self->tIdx != 0 && self->tIdx < 4){
+				snprintf(self->buff, sizeof(self->buff), "\nInterval Between Press %d and %d is %ldms\n", self->tIdx+1, self->tIdx, 
+				(temp_time-self->press_time[self->tIdx-1]) / 100);
 				SCI_WRITE(&sci0, self->buff);
-				// difference no more than 100ms
-				if(abs(temp1 - temp2) <= 10000 && abs(temp1 - temp3) <= 10000 && abs(temp3 - temp2) <= 10000) {
-					tempo_v = 4 * 6000000 / (temp1 + temp2 + temp3);
-					snprintf(self->buff, sizeof(self->buff), "\nTap Tempo value is %d\n", tempo_v);
-					SCI_WRITE(&sci0, self->buff);
-					ASYNC(&ctrl_obj, set_tempo, tempo_v);
-				}else {
-					SCI_WRITE(&sci0, "\nThe difference between intervals are larger than 100ms! No tempo changed!\n");
-				}
+			}else if(self->tIdx==0){
+				
+				SCI_WRITE(&sci0, "\nFirst press for new sequence of tempo tap!\n");
 			}
-		} else {
-			self->tIdx = 0;
+		
+			// circulate the index of the time array which stores the time of each press
+			if(self->tIdx < self->total_time_num ) {
+				// record the time of valid press
+				self->press_time[self->tIdx] = temp_time;
+				self->tIdx++;
+				self->tap_cnt++;
+				// only check the tempo at the fourth press
+				if(self->tIdx == self->total_time_num  ){
+					temp1 = abs(self->press_time[1] - self->press_time[0]); // interval 1
+					temp2 = abs(self->press_time[2] - self->press_time[1]); // interval 2
+					temp3 = abs(self->press_time[3] - self->press_time[2]); // interval 3
+					snprintf(self->buff, sizeof(self->buff), "\ninterval_1=%ldms, interval_2=%ldms, interval_3=%ldms\n",
+						temp1 / 100, temp2 / 100, temp3 / 100);
+					SCI_WRITE(&sci0, self->buff);
+					// difference no more than 100ms
+					if(abs(temp1 - temp2) <= 10000 && abs(temp1 - temp3) <= 10000 && abs(temp3 - temp2) <= 10000) {
+						tempo_v = 3 * 6000000 / (temp1 + temp2 + temp3);
+						snprintf(self->buff, sizeof(self->buff), "\nTap Tempo value is %d\n", tempo_v);
+						SCI_WRITE(&sci0, self->buff);
+						ASYNC(&ctrl_obj, set_tempo, tempo_v);
+					}else {
+						SCI_WRITE(&sci0, "\nThe difference between intervals are larger than 100ms! No tempo changed!\n");
+					}
+				}
+			} else {
+				self->tIdx = 0;
+				self->tap_cnt++;
+			}
 		}
-    }
+	}
 }
 
 void reset_mode(App* self, int c)
@@ -322,7 +387,12 @@ void parse_can_msg(App* self, int unused)
 	    // reset the tone generator
 	    SYNC(&sound_0, stop_play_sound, 1);
 	    // start music controller
-	    ASYNC(&ctrl_obj, go_play, 0);
+	    ASYNC(&ctrl_obj, go_play, 1);
+		// start the blink
+			// turn on led
+		//SEND(USEC(30000/ctrl_obj.tempo), USEC(100), &background_load, turn_on_led, 0);
+		// turn off led
+		//SEND(USEC(60000/ctrl_obj.tempo), USEC(100), &background_load, turn_off_led, 0);
 	    // start the tone generator
 	    ASYNC(&sound_0, play_sound, 0);
 
@@ -403,7 +473,12 @@ void reader(App* self, int c)
 	// reset the tone generator
 	SYNC(&sound_0, stop_play_sound, 1);
 	// start music controller
-	ASYNC(&ctrl_obj, go_play, 0);
+	ASYNC(&ctrl_obj, go_play, 1);
+	// start the blink
+			// turn on led
+		// SEND(USEC(30000/ctrl_obj.tempo), USEC(100), &background_load, turn_on_led, 0);
+		// turn off led
+		// SEND(USEC(60000/ctrl_obj.tempo), USEC(100), &background_load, turn_off_led, 0);
 	// start the tone generator
 	ASYNC(&sound_0, play_sound, 0);
 
@@ -729,6 +804,7 @@ void stop_go_play(Controller* self, int _OFF)
 void go_play(Controller* self, int unused)
 {
     int cur_beat_length = 0;
+	int _1_beat = 0;
     int _silent_time = 0;
     // calculate the frequency index according to key
     int _freq_index = self->freq_index[self->index] + self->key;
@@ -740,6 +816,7 @@ void go_play(Controller* self, int unused)
     SYNC(&sound_0, set_freq, current_freq);
     // calculate the beat length
     cur_beat_length = self->note_len[self->index] * 30000 / self->tempo;
+	_1_beat = 60000 / self->tempo; 
     // dynamic slience time
     if(self->tempo >= 30 && self->tempo < 100) {
 	_silent_time = 100;
@@ -760,11 +837,38 @@ void go_play(Controller* self, int unused)
 
     if(self->_ON) {
 	// call itself to achieve the periodic play
-	SEND(MSEC(cur_beat_length), USEC(100), self, go_play, 0);
-	// turn on led
-	SEND(MSEC(cur_beat_length), USEC(100), &background_load, turn_on_led, 0);
-	// turn off led
-	SEND(MSEC(cur_beat_length/2), USEC(100), &background_load, turn_off_led, 0);
+		SEND(USEC(cur_beat_length*1000), USEC(100), self, go_play, 0);
+		int tempB = _1_beat/2;
+		int tempB2 = 2*_1_beat;
+		if(cur_beat_length == tempB){
+			if (background_load._toggle){
+			//	// turn on led
+				SEND(0, USEC(100), &background_load, turn_on_led, 0);
+			}
+			else{
+			//	// turn off led
+				SEND(0, USEC(100), &background_load, turn_off_led, 0);
+			}
+			background_load._toggle = !background_load._toggle;
+		}
+		else if ( cur_beat_length == _1_beat) {
+				//	// turn on led
+				SEND(0, USEC(100), &background_load, turn_on_led, 0);
+			//	// turn off led
+				SEND(USEC(cur_beat_length/2*1000), USEC(100), &background_load, turn_off_led, 0);
+		}
+		else if (cur_beat_length == tempB2) {
+				//	// turn on led
+				SEND(0, USEC(100), &background_load, turn_on_led, 0);
+			//	// turn off led
+				SEND(USEC(cur_beat_length/2*1000/2), USEC(100), &background_load, turn_off_led, 0);
+					//	// turn on led
+				SEND(USEC(cur_beat_length*1000/2), USEC(100), &background_load, turn_on_led, 0);
+			//	// turn off led
+				SEND(USEC(cur_beat_length/2*1000/2*3), USEC(100), &background_load, turn_off_led, 0);
+		}	
+		
+
     }
     // loop within the music segments
     if(self->index < (self->totalTones - 1)) {
@@ -823,7 +927,11 @@ void set_tempo(Controller* self, int _tempo)
 // background load .c-----------------------------------------------------------------
 void turn_on_led(Background_load* self, int unused){
 	SIO_WRITE(&button0, 0);
+	// start the blink
+
 }
 void turn_off_led(Background_load* self, int unused){
 	SIO_WRITE(&button0, 1);
+
+
 }
